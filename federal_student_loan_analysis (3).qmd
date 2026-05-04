@@ -1,0 +1,1025 @@
+---
+title: "Federal Student Loan Default Trends: An Exploratory Data Analysis"
+subtitle: "STAT 184 -- Spring 2026 Course Project"
+date: "May 2026"
+format:
+  pdf:
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    fig-cap-location: bottom
+    fig-align: center
+    geometry:
+      - top=1in
+      - bottom=1in
+      - left=1in
+      - right=1in
+    include-in-header:
+      text: |
+        \usepackage{booktabs}
+        \usepackage{longtable}
+        \usepackage{float}
+        \floatplacement{figure}{H}
+execute:
+  echo: false
+  warning: false
+  message: false
+  cache: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+# Style Guide: Tidyverse Style Guide (https://style.tidyverse.org/)
+# Primary Author: [Ammar Sheikh] | Reviewed by: [All Members]
+
+library(readxl)
+library(tidyverse)
+library(ggplot2)
+library(scales)
+library(knitr)
+library(kableExtra)
+
+# ── Shared file paths ──────────────────────────────────────────────────────────
+# Replace with your local path, or use a repo-relative path after cloning.
+portfolio_fp  <- "C:\\Users\\ammar\\OneDrive\\Desktop\\personal\\spring 2026\\STAT 184\\project_datasets\\PortfoliobyLoanStatus.xls"
+defaults_fp   <- "C:\\Users\\ammar\\OneDrive\\Desktop\\personal\\spring 2026\\STAT 184\\project_datasets\\DLEnteringDefaults.xls"
+
+# ── Shared theme ───────────────────────────────────────────────────────────────
+stat184_theme <- theme_minimal(base_size = 10) +
+  theme(
+    plot.title       = element_text(face = "bold", color = "#1B3A5C", size = 11),
+    plot.subtitle    = element_text(color = "#555555", size = 8.5),
+    plot.caption     = element_text(color = "#888888", size = 7),
+    axis.text.x      = element_text(angle = 45, hjust = 1, size = 7),
+    panel.grid.minor = element_blank()
+  )
+```
+
+```{r}
+#| label: load-direct-loan
+#| include: false
+
+# Primary Author: [Ammar Sheikh] | Reviewed by: [Member B]
+# Source file: Protfolio_by_loan_status_direct_loans.R
+
+raw_dl <- read_excel(
+  portfolio_fp,
+  sheet = "Direct Loan",
+  col_names = TRUE
+)
+
+cleaned_dlp <- raw_dl[4:56, -c(4, 6, 8, 10, 12, 14, 16)]
+names(cleaned_dlp) <- c(
+  "fiscal_year", "quarter", "in_School", "grace",
+  "repayment", "deferment", "forbearance", "cumulative_in_default", "other"
+)
+cleaned_dlp <- cleaned_dlp[-c(1, 2), ] |>
+  mutate(quarter_clean = str_remove(as.character(quarter), "\\*+")) |>
+  filter(str_detect(quarter_clean, "^Q[1-4]$")) |>
+  mutate(
+    fiscal_year           = as.numeric(fiscal_year),
+    across(c(in_School, repayment, deferment, forbearance, cumulative_in_default), as.numeric),
+    time                  = paste(fiscal_year, quarter_clean, sep = " "),
+    time_index            = row_number()
+  ) |>
+  filter(!is.na(in_School))
+
+# Check: verify shape and column types immediately after cleaning
+# Expected: ~51 rows, 11 columns, fiscal_year numeric, value cols numeric
+glimpse(cleaned_dlp)
+```
+
+```{r}
+#| label: load-defaults
+#| include: false
+
+# Primary Author: [Ammar Sheikh] | Reviewed by: [Member A]
+# Source file: entering_default_dl_analysis.R
+
+raw_defaults_full <- read_excel(
+  defaults_fp,
+  skip = 6,
+  col_names = FALSE,
+  .name_repair = "unique"
+) |>
+  select(1:8)
+
+colnames(raw_defaults_full) <- c(
+  "federal_fiscal_year", "quarter",
+  "dollars_in_repayment_prev_q", "recipients_in_repayment_prev_q",
+  "dollars_total", "unique_borrowers",
+  "pct_dollars_defaulted", "pct_borrowers_defaulted"
+)
+
+clean_defaults <- raw_defaults_full |>
+  fill(federal_fiscal_year) |>
+  mutate(quarter_clean = str_remove(as.character(quarter), "\\*+")) |>
+  filter(str_detect(quarter_clean, "^Q[1-4]$")) |>
+  mutate(
+    federal_fiscal_year       = as.numeric(federal_fiscal_year),
+    across(c(dollars_total, pct_borrowers_defaulted), as.numeric),
+    default_rate_pct          = as.numeric(pct_borrowers_defaulted) * 100,
+    time                      = paste(federal_fiscal_year, quarter_clean, sep = " "),
+    time_index                = row_number(),
+    is_cares_era              = federal_fiscal_year >= 2020 &
+      !(federal_fiscal_year == 2020 & quarter_clean %in% c("Q1", "Q2"))
+  ) |>
+  filter(!is.na(federal_fiscal_year), !is.na(pct_borrowers_defaulted))
+
+# Check: confirm default_rate_pct is numeric and CARES flag looks correct
+glimpse(clean_defaults)
+```
+
+```{r}
+#| label: load-all-loans
+#| include: false
+
+# Primary Author: [Ammar Sheikh] | Reviewed by: [Member A]
+# Source file: cumulative_defaults_across_loans.R
+# Plan: build a helper function to read cumulative default from any sheet,
+#       then map it across all four loan types and join into one tidy frame.
+# Code: used map() + reduce(full_join) to avoid repeated copy-paste reads.
+# Improve: added quarter_clean to the join key after noticing misaligned rows
+#          in an earlier draft that joined only on year and raw quarter string.
+# Polish: column renaming uses !! + := for programmatic naming — avoids
+#         hard-coding four separate rename calls.
+
+read_cumulative_default <- function(sheet_name) {
+  loan_name <- sheet_name |>
+    tolower() |>
+    str_replace_all(" ", "_") |>
+    str_replace_all("-", "_")
+
+  read_excel(
+    path = portfolio_fp,
+    sheet = sheet_name,
+    skip = 6,
+    col_names = FALSE
+  ) |>
+    select(
+      federal_fiscal_year = 1,
+      quarter             = 2,
+      cumulative_default  = 13
+    ) |>
+    fill(federal_fiscal_year) |>
+    mutate(quarter_clean = str_remove(as.character(quarter), "\\*+")) |>
+    filter(str_detect(quarter_clean, "^Q[1-4]$")) |>
+    mutate(
+      federal_fiscal_year = as.numeric(federal_fiscal_year),
+      cumulative_default  = as.numeric(cumulative_default)
+    ) |>
+    rename(!!paste0(loan_name, "_cumulative_default") := cumulative_default)
+}
+
+loan_sheets <- c("Direct Loan", "FFEL", "ED-Held FFEL", "Federally Managed")
+
+cumulative_across_loans <- loan_sheets |>
+  map(read_cumulative_default) |>
+  reduce(full_join, by = c("federal_fiscal_year", "quarter", "quarter_clean")) |>
+  arrange(federal_fiscal_year, quarter_clean) |>
+  mutate(time = paste(federal_fiscal_year, quarter_clean, sep = " "),
+         time_index = row_number())
+```
+
+```{r}
+#| label: load-additional
+#| include: false
+
+# Primary Author: [Ammar Sheikh] | Reviewed by: [Member C]
+# Plan: prepare derived datasets for all five recommended additional analyses
+#       in a single chunk so they are available throughout the document.
+# Code: each dataset is a filtered/mutated version of an already-imported
+#       base frame — no redundant file reads.
+# Improve: raw_dl_total is reused for Rec 2, 3, and 5 to avoid reading
+#          the same Excel sheet four separate times.
+
+# --- Rec 1: Recipients vs Dollars ---
+raw_dl_recip <- read_excel(
+  portfolio_fp,
+  sheet = "Direct Loan",
+  skip = 6,
+  col_names = FALSE,
+  .name_repair = "unique"
+) |>
+  select(
+    federal_fiscal_year = 1, quarter = 2,
+    default_dollars     = 13, default_recipients = 14
+  ) |>
+  fill(federal_fiscal_year) |>
+  mutate(quarter_clean = str_remove(as.character(quarter), "\\*+")) |>
+  filter(str_detect(quarter_clean, "^Q[1-4]$")) |>
+  mutate(
+    federal_fiscal_year        = as.numeric(federal_fiscal_year),
+    default_dollars            = as.numeric(default_dollars),
+    default_recipients         = as.numeric(default_recipients),
+    avg_debt_per_defaulter_k   = (default_dollars / default_recipients) * 1000,
+    time                       = paste(federal_fiscal_year, quarter_clean, sep = " "),
+    time_index                 = row_number()
+  ) |>
+  filter(!is.na(default_dollars), !is.na(default_recipients))
+
+# --- Rec 2: Total portfolio and default share ---
+raw_dl_total <- read_excel(
+  portfolio_fp, sheet = "Direct Loan",
+  skip = 6, col_names = FALSE, .name_repair = "unique"
+) |>
+  select(
+    federal_fiscal_year = 1, quarter = 2,
+    in_school = 3, grace = 5, repayment = 7,
+    deferment = 9, forbearance = 11, cumulative_default = 13, other = 15
+  ) |>
+  fill(federal_fiscal_year) |>
+  mutate(quarter_clean = str_remove(as.character(quarter), "\\*+")) |>
+  filter(str_detect(quarter_clean, "^Q[1-4]$")) |>
+  mutate(
+    across(c(in_school, grace, repayment, deferment, forbearance, cumulative_default, other), as.numeric),
+    federal_fiscal_year  = as.numeric(federal_fiscal_year),
+    total_portfolio      = rowSums(across(c(in_school, grace, repayment, deferment,
+                                             forbearance, cumulative_default, other)), na.rm = TRUE),
+    default_pct_of_total = (cumulative_default / total_portfolio) * 100,
+    time                 = paste(federal_fiscal_year, quarter_clean, sep = " "),
+    time_index           = row_number()
+  ) |>
+  filter(!is.na(total_portfolio))
+
+# --- Rec 3: Seasonality ---
+clean_seasonal <- raw_dl_total |>
+  mutate(quarter_clean = str_remove(as.character(quarter_clean), "\\*+")) |>
+  filter(!is.na(in_school))
+
+seasonal_avg <- clean_seasonal |>
+  filter(federal_fiscal_year < 2020) |>
+  group_by(quarter_clean) |>
+  summarize(avg_in_school = mean(in_school, na.rm = TRUE), .groups = "drop")
+
+# --- Rec 5: QoQ surge ---
+clean_surge <- raw_dl_total |>
+  mutate(
+    qoq_default_change = cumulative_default - lag(cumulative_default),
+    post_pause = federal_fiscal_year >= 2024 |
+      (federal_fiscal_year == 2023 & quarter_clean == "Q4")
+  )
+```
+
+\newpage
+
+# Introduction
+
+Federal student loan debt now exceeds \$1.7 trillion in outstanding balances and touches the financial lives of over 42 million Americans. Within this landscape, one of the most important signals of borrower distress is **default**, which is reached when a borrower fails to make a payment for 361 or more consecutive days while in repayment. Understanding how default has evolved over time, and what has driven it, is the core purpose of this analysis.
+
+This report covers the period from fiscal year 2013 through fiscal year 2026 Q1, examining Direct Loans, Federal Family Education Loans (FFEL), and ED-held FFEL portfolios. The research question guiding the work is:
+
+> *How have macroeconomic policy interventions, specifically the CARES Act of 2020 and the subsequent executive actions, shaped the trajectory of federal student loan defaults, and what do the post-pandemic trends tell us about where things stand today?*
+
+This analysis follows the **Exploratory Data Analysis (EDA)** tradition rather than confirmatory analysis. Rather than testing pre-specified hypotheses, the goal is to let the data surface patterns and raise questions for further investigation. All coding follows the **Tidyverse paradigm**, chosen because its pipe-based grammar makes each transformation step readable and easy for another person to follow and verify.
+
+# Data Provenance
+
+Both datasets originate from the **Federal Student Aid (FSA) Data Center**, a branch of the U.S. Department of Education, and are drawn from the **National Student Loan Data System (NSLDS)**. They are publicly available at [studentaid.gov/data-center/student/portfolio](https://studentaid.gov/data-center/student/portfolio). The data is published by the Office of Federal Student Aid as a requirement of the Higher Education Act, which mandates public transparency over the federal student aid portfolio. Two workbooks are used here. The first is the *Portfolio by Loan Status* workbook, which contains quarterly snapshots of outstanding principal and interest balances broken down across seven loan statuses for four portfolio types. The second is the *Direct Loans Entering Default* workbook, which tracks new dollars and borrowers entering default each quarter. Both are run at the end of each federal fiscal quarter, and the analysis covers FY2013 Q3 through FY2026 Q1.
+
+The raw Excel workbooks required a meaningful amount of cleaning before they were ready for analysis. Each sheet stores the fiscal year as a merged cell, meaning the year value only appears in the first row of each year group and the remaining rows for that year are blank. The `fill()` function propagated the year value downward to solve this. Quarter labels during the CARES-era period are also suffixed with an asterisk, such as `Q3*`, to flag them as policy-affected quarters. These were stripped using `str_remove()` so that all quarters could be filtered consistently. The first six rows of each sheet are metadata, so `skip = 6` was used when reading the files in. One subtlety worth noting is that dollar amounts during the CARES period are stored as near-zero floating point values rather than true `NA` values, because borrowers were legally prohibited from entering default rather than having their data left blank. All monetary values throughout the data are in **billions of US dollars** and recipient counts are in **millions of borrowers**.
+
+In terms of what constitutes a case in this data, each case in the Portfolio by Loan Status workbook represents a single federal fiscal quarter for a given loan portfolio type, such as Direct Loan or FFEL. In the Direct Loans Entering Default workbook, each case similarly represents one federal fiscal quarter of new default activity. A federal fiscal quarter is a three-month window where Q1 ends December 31, Q2 ends March 31, Q3 ends June 30, and Q4 ends September 30.
+
+The attributes recorded for each case in the portfolio data are the outstanding principal and interest balance in billions of USD across seven loan statuses: In School, Grace, Repayment, Deferment, Forbearance, Cumulative in Default, and Other. For each status the corresponding recipient count in millions of borrowers is also recorded. In the entering-default data, the attributes include dollars in repayment from the prior quarter, total dollars entering default in the current quarter, unique borrowers entering default in thousands, the percentage of prior-quarter repayment dollars that defaulted, the percentage of borrowers that defaulted, and a breakdown separating first-time defaults from repeat defaults.
+
+On the question of FAIR principles, the data satisfies all four. It is findable through studentaid.gov with clear metadata, accessible without any registration or cost, interoperable through a consistent quarterly tabular schema across sheets, and reusable given the data definitions and footnotes included in the workbooks. One limitation is that some columns revert to NA values after 2018 due to methodology changes, which reduces reusability for certain specific metrics. On CARE principles, there are no individual borrowers identifiable in this data since it is all aggregate statistics, and authority rests with the Department of Education. The more important limitation here is that the data does not break down by race, gender, or institution type, which constrains equity-focused analysis even though disparities in student loan outcomes across demographic groups are well documented.
+
+# Key Definitions
+
+```{r}
+#| label: tbl-definitions
+#| tbl-cap: "Key loan status definitions. Source: FSA Data Center, NSLDS Loan Status Definitions tab."
+
+definitions <- tibble(
+  Term = c(
+    "Default", "Cumulative in Default", "Repayment", "Deferment",
+    "Forbearance", "Administrative Forbearance", "In School",
+    "Direct Loan", "FFEL", "ED-Held FFEL"
+  ),
+  Definition = c(
+    "Failure to make a payment for 361+ days while in repayment. Triggers federal collection actions.",
+    "Total outstanding dollars currently in default status at the quarterly snapshot date.",
+    "Borrower is actively making scheduled loan payments.",
+    "Repayment temporarily paused; government covers interest on subsidized direct loans.",
+    "Repayment paused; interest accrues on all loans including subsidized. Broader discretion than deferment.",
+    "A specific forbearance type granted under emergency law (e.g., CARES Act) at 0% interest rate.",
+    "Borrower is enrolled at least half-time; no repayment required.",
+    "Loans issued directly by the U.S. Department of Education (primary program since 2010).",
+    "Federal Family Education Loans — issued by private lenders with federal guarantees (discontinued 2010).",
+    "FFEL loans purchased and now managed by the Department of Education."
+  )
+)
+
+kable(definitions, booktabs = TRUE, linesep = "") |>
+  kable_styling(latex_options = c("striped", "hold_position"), font_size = 8) |>
+  column_spec(1, bold = TRUE, width = "1.6in") |>
+  column_spec(2, width = "4.8in")
+```
+
+# Descriptive Statistics
+
+```{r}
+#| label: tbl-descriptive-stats
+#| tbl-cap: "Descriptive statistics for key Direct Loan portfolio attributes ($ billions). Computed across all quarterly observations from FY2013 Q3 through FY2026 Q1. Source: FSA Data Center / NSLDS."
+
+# Primary Author: Ammar Sheikh | Reviewed by: [Member B]
+# Plan: summarize the four most analytically relevant continuous attributes
+#       using dplyr::summarize with named statistics, then display via kable.
+# Improve: added IQR and rounded all values to 1 decimal for readability.
+
+descriptive_stats <- cleaned_dlp |>
+  summarize(
+    across(
+      c(repayment, forbearance, deferment, cumulative_in_default),
+      list(
+        Min    = ~ round(min(.x, na.rm = TRUE), 1),
+        Q1     = ~ round(quantile(.x, 0.25, na.rm = TRUE), 1),
+        Median = ~ round(median(.x, na.rm = TRUE), 1),
+        Mean   = ~ round(mean(.x, na.rm = TRUE), 1),
+        Q3     = ~ round(quantile(.x, 0.75, na.rm = TRUE), 1),
+        Max    = ~ round(max(.x, na.rm = TRUE), 1),
+        SD     = ~ round(sd(.x, na.rm = TRUE), 1)
+      ),
+      .names = "{.col}__{.fn}"
+    )
+  ) |>
+  pivot_longer(
+    cols      = everything(),
+    names_to  = c("attribute", "statistic"),
+    names_sep = "__"
+  ) |>
+  pivot_wider(names_from = statistic, values_from = value) |>
+  mutate(
+    attribute = recode(attribute,
+      repayment             = "Repayment",
+      forbearance           = "Forbearance",
+      deferment             = "Deferment",
+      cumulative_in_default = "Cumulative in Default"
+    )
+  )
+
+kable(
+  descriptive_stats,
+  booktabs = TRUE,
+  linesep  = "",
+  col.names = c("Attribute", "Min", "Q1", "Median", "Mean", "Q3", "Max", "SD"),
+  align     = c("l", rep("r", 7))
+) |>
+  kable_styling(
+    latex_options = c("striped", "hold_position"),
+    font_size     = 9
+  ) |>
+  column_spec(1, bold = TRUE, width = "1.7in") |>
+  add_header_above(
+    c(" " = 1, "Summary Statistics ($ billions)" = 7),
+    bold = TRUE
+  )
+```
+
+Looking across these summary statistics, repayment carries the largest mean at \$449 billion but also the largest standard deviation at \$259 billion. That variance is almost entirely explained by the CARES Act collapse, which pulled repayment down from over \$700 billion to essentially zero in the space of one quarter. Forbearance shows the most extreme range of any attribute, from a pre-pandemic minimum near \$48 billion to a pandemic peak of over \$1,000 billion, which again reflects the CARES Act. Cumulative default has a comparatively tight distribution with a mean of \$98 billion and a standard deviation of \$24 billion, consistent with its nature as a slow-moving stock that accumulates gradually. Deferment is the most stable attribute across the full time series.
+
+\newpage
+
+# Core Analysis
+
+## Loan Status Trends Over Time (Direct Loans) {#sec-fig1}
+
+```{r}
+#| label: fig-loan-status-trends
+#| fig-cap: "Direct Loan Portfolio by Status ($ billions), FY2013 Q3 – FY2026 Q1. The dashed vertical line marks CARES Act implementation (March 2020). Five loan status categories are shown."
+#| fig-alt: "Multi-line time series showing five direct loan statuses from 2013 to 2026. Forbearance spikes sharply from around 124 billion to 888 billion in FY2020 Q3 as repayment collapses. Cumulative default rises gradually pre-pandemic then falls during CARES, before surging in FY2026 Q1."
+#| fig-width: 6.5
+#| fig-height: 3.8
+
+# Primary Author: Ammar Sheikh | Reviewed by: [Member B]
+# Source file: Protfolio_by_loan_status_direct_loans.R
+
+cares_idx <- which(cleaned_dlp$time == "2020 Q3")
+
+cleaned_dlp |>
+  pivot_longer(
+    cols      = c(in_School, repayment, deferment, forbearance, cumulative_in_default),
+    names_to  = "category",
+    values_to = "value"
+  ) |>
+  mutate(
+    # Improve: replaced superseded recode() with case_when()
+    category = case_when(
+      category == "in_School"             ~ "In School",
+      category == "repayment"             ~ "Repayment",
+      category == "deferment"             ~ "Deferment",
+      category == "forbearance"           ~ "Forbearance",
+      category == "cumulative_in_default" ~ "Cumulative in Default",
+      .default = category
+    )
+  ) |>
+  ggplot(aes(x = time_index, y = value, group = category, color = category)) +
+  geom_vline(xintercept = cares_idx, linetype = "dashed",
+             color = "#666666", linewidth = 0.7) +
+  annotate("text", x = cares_idx + 0.6,
+           y = max(cleaned_dlp$forbearance, na.rm = TRUE) * 0.88,
+           label = "CARES Act\n(Mar 2020)", size = 2.4, color = "#555555", hjust = 0) +
+  geom_line(linewidth = 1.1) +
+  scale_x_continuous(
+    breaks = seq(1, nrow(cleaned_dlp), by = 4),
+    labels = cleaned_dlp$time[seq(1, nrow(cleaned_dlp), by = 4)]
+  ) +
+  scale_y_continuous(labels = label_dollar(suffix = "B", accuracy = 1)) +
+  scale_color_manual(values = c(
+    "Cumulative in Default" = "#C0392B",
+    "Deferment"             = "#E67E22",
+    "Forbearance"           = "#27AE60",
+    "In School"             = "#2980B9",
+    "Repayment"             = "#8E44AD"
+  )) +
+  labs(
+    x     = "Fiscal Quarter",
+    y     = "Dollars Outstanding ($ billions)",
+    color = "Loan Status"
+  ) +
+  stat184_theme +
+  theme(legend.position = "right", legend.text = element_text(size = 7))
+```
+
+From the graph we can observe several important trends across the full period. Prior to 2020, repayment balances grew steadily from approximately \$237 billion in FY2013 Q3 to over \$728 billion by FY2020 Q1. This reflects the continued expansion of the Direct Loan program following the discontinuation of FFEL loans in 2010. Cumulative default grew in parallel, rising from \$30.5 billion to \$125 billion over the same seven years.
+
+The most visible structural break in the graph occurs at FY2020 Q3. This is where the CARES Act placed virtually all borrowers into administrative forbearance, causing repayment to collapse from \$728 billion to just \$11 billion in a single quarter while forbearance surged upward by over 600%. This condition persisted through FY2023 under subsequent executive actions. What is worth noting here is that cumulative default actually declined during this period rather than rising, which we will explain further in the sections that follow. However as of FY2026 Q1 cumulative default has surged to \$141.7 billion, the largest single-quarter increase in the entire dataset, signaling that the delayed defaults are now materializing.
+
+## Dollars Entering Default per Quarter {#sec-fig2}
+
+```{r}
+#| label: fig-entering-default
+#| fig-cap: "Direct Loans entering default per quarter ($ billions), FY2015 Q1 – FY2023 Q3. Total, first-time, and repeat defaults shown. All lines drop to zero following CARES Act implementation."
+#| fig-alt: "Line chart with three series: total, first-time, and repeat dollars entering default. All three series drop abruptly to zero at FY2020 Q3 and remain at zero through FY2023 Q3."
+#| fig-width: 6.5
+#| fig-height: 3.5
+
+# Primary Author: Ammar Sheikh | Reviewed by: [Member A]
+# Source file: entering_default_dl_analysis.R
+# Plan: read DLEnteringDefaults and plot dollars entering default by type.
+# Improve: consolidated to a single read_excel call with all 12 columns named
+#          directly — earlier draft read the file twice which was redundant.
+
+raw_entering2 <- read_excel(
+  defaults_fp,
+  skip       = 6,
+  col_names  = FALSE,
+  .name_repair = "unique"
+)
+
+colnames(raw_entering2) <- c(
+  "federal_fiscal_year", "quarter",
+  "dollars_repayment_prev", "recip_repayment_prev",
+  "dollars_total", "borrowers_total",
+  "pct_dollars", "pct_borrowers",
+  "dollars_first", "borrowers_first",
+  "dollars_second", "borrowers_second"
+)
+
+clean_entering <- raw_entering2 |>
+  fill(federal_fiscal_year) |>
+  mutate(quarter_clean = str_remove(as.character(quarter), "\\*+")) |>
+  filter(str_detect(quarter_clean, "^Q[1-4]$")) |>
+  mutate(
+    federal_fiscal_year = as.numeric(federal_fiscal_year),
+    across(c(dollars_total, dollars_first, dollars_second), ~ suppressWarnings(as.numeric(.))),
+    time       = paste(federal_fiscal_year, quarter_clean, sep = " "),
+    time_index = row_number()
+  ) |>
+  filter(!is.na(federal_fiscal_year))
+
+zero_start <- min(clean_entering$time_index[
+  !is.na(clean_entering$dollars_total) & clean_entering$dollars_total == 0
+], na.rm = TRUE)
+
+clean_entering |>
+  select(time_index, time, dollars_total, dollars_first, dollars_second) |>
+  pivot_longer(
+    cols      = c(dollars_total, dollars_first, dollars_second),
+    names_to  = "type",
+    values_to = "value"
+  ) |>
+  mutate(
+    # Improve: replaced superseded recode() with case_when()
+    type = case_when(
+      type == "dollars_total"  ~ "Total Entering Default",
+      type == "dollars_first"  ~ "First-Time Default",
+      type == "dollars_second" ~ "Repeat Default",
+      .default = type
+    )
+  ) |>
+  ggplot(aes(x = time_index, y = value, color = type, group = type)) +
+  geom_vline(xintercept = zero_start, linetype = "dashed",
+             color = "#666666", linewidth = 0.7) +
+  annotate("text", x = zero_start + 0.5,
+           y = max(clean_entering$dollars_total, na.rm = TRUE) * 0.82,
+           label = "Defaults -> $0\n(CARES Act)", size = 2.4, color = "#555555", hjust = 0) +
+  geom_line(linewidth = 1.1) +
+  scale_x_continuous(
+    breaks = seq(1, nrow(clean_entering), by = 3),
+    labels = clean_entering$time[seq(1, nrow(clean_entering), by = 3)]
+  ) +
+  scale_y_continuous(labels = label_dollar(suffix = "B", accuracy = 0.1)) +
+  scale_color_manual(values = c(
+    "Total Entering Default" = "#C0392B",
+    "First-Time Default"     = "#2980B9",
+    "Repeat Default"         = "#E67E22"
+  )) +
+  labs(x = "Fiscal Quarter", y = "Dollars Entering Default ($ billions)", color = NULL) +
+  stat184_theme +
+  theme(legend.position = "bottom")
+```
+
+This graph helps clarify an ambiguity raised by the first one. Cumulative default was declining during the CARES period, but that does not mean defaults were being resolved in great numbers. What it really shows is that new defaults were completely prohibited. As we can observe, from FY2015 through FY2020 Q2 the dollars entering default each quarter ranged between roughly \$4 and \$9 billion. Then in FY2020 Q3 the total drops to zero and stays there through FY2023 Q3. This is a direct consequence of the CARES Act, under which borrowers could not legally enter default.
+
+It is also worth noting that across the pre-pandemic period, first-time defaults consistently made up approximately 85 to 90% of the total, with repeat defaults accounting for the remainder. Repeat defaults come from borrowers whose loans were previously rehabilitated and then defaulted a second time. This distinction matters because it suggests that rehabilitation programs alone are not sufficient for a meaningful share of borrowers.
+
+## Deferment vs. Forbearance: Annual Rate of Change {#sec-fig3}
+
+```{r}
+#| label: fig-rate-of-change
+#| fig-cap: "Average yearly rate of change for deferment and forbearance balances (Direct Loans). Forbearance surges dramatically in 2020 while deferment collapses, as CARES Act moved both populations into administrative forbearance."
+#| fig-alt: "Grouped bar chart. In 2020, the forbearance bar spikes to roughly 150 percent positive change while the deferment bar drops sharply toward zero. Both show volatility around 2023 to 2024 as the forbearance period ends."
+#| fig-width: 6.5
+#| fig-height: 3.5
+
+# Primary Author: Ammar Sheikh | Reviewed by: [Member C]
+# Source file: Protfolio_by_loan_status_direct_loans.R
+
+cleaned_dlp |>
+  arrange(fiscal_year, quarter_clean) |>
+  mutate(
+    deferment_change   = deferment   - lag(deferment),
+    forbearance_change = forbearance - lag(forbearance)
+  ) |>
+  group_by(fiscal_year) |>
+  summarize(
+    avg_deferment_change   = mean(deferment_change,   na.rm = TRUE),
+    avg_forbearance_change = mean(forbearance_change, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  pivot_longer(
+    cols      = c(avg_deferment_change, avg_forbearance_change),
+    names_to  = "category",
+    values_to = "avg_change"
+  ) |>
+  mutate(
+    # Improve: replaced superseded recode() with case_when() per Tidyverse lifecycle
+    category = case_when(
+      category == "avg_deferment_change"   ~ "Avg. Deferment Change",
+      category == "avg_forbearance_change" ~ "Avg. Forbearance Change",
+      .default = category
+    )
+  ) |>
+  ggplot(aes(x = factor(fiscal_year), y = avg_change, fill = category)) +
+  geom_col(position = "dodge", width = 0.7, alpha = 0.88) +
+  geom_hline(yintercept = 0, color = "#666666", linewidth = 0.5) +
+  scale_fill_manual(values = c(
+    "Avg. Deferment Change"   = "#E67E22",
+    "Avg. Forbearance Change" = "#27AE60"
+  )) +
+  scale_y_continuous(labels = label_dollar(suffix = "B", accuracy = 1)) +
+  labs(x = "Fiscal Year", y = "Avg. Year-over-Year Change ($ billions)", fill = NULL) +
+  stat184_theme +
+  theme(legend.position = "bottom")
+```
+
+To further understand what happened in 2020 to both forbearance and deferment, this graph shows the average year-over-year rate of change for each. As we can see, forbearance skyrockets in 2020 while the rate of change for deferment goes to near zero in that same period. The justification for this is that under the CARES Act, even those already in deferment were moved into administrative forbearance, which consolidated both populations into one category. Post-2023 the forbearance rate of change goes sharply negative as the program winds down, and there is a secondary spike in 2024 connected to the SAVE repayment plan injunction which again moved a large group of borrowers into forbearance.
+
+## Cumulative Default Across All Loan Types {#sec-fig4}
+
+```{r}
+#| label: fig-cross-loan
+#| fig-cap: "Cumulative default ($ billions) across all federal loan types, from each portfolio's earliest available quarter through FY2026 Q1. The CARES Act dashed line marks March 2020."
+#| fig-alt: "Multi-line chart with four loan types. Direct loan and ED-held FFEL cumulative default decline during the CARES era then diverge post-2023. FFEL and federally managed portfolios show a steady gradual decline consistent with their closed-book status."
+#| fig-width: 6.5
+#| fig-height: 3.8
+
+# Primary Author: Ammar Sheikh | Reviewed by: [Member B]
+# Source file: cumulative_defaults_across_loans.R
+
+cares_cross <- which(cumulative_across_loans$time == "2020 Q3")
+
+cumulative_across_loans |>
+  pivot_longer(
+    cols      = ends_with("_cumulative_default"),
+    names_to  = "loan_type",
+    values_to = "cumulative_default"
+  ) |>
+  mutate(
+    # Improve: replaced superseded recode() with case_when()
+    loan_type = case_when(
+      loan_type == "direct_loan_cumulative_default"       ~ "Direct Loan",
+      loan_type == "ffel_cumulative_default"              ~ "FFEL",
+      loan_type == "ed_held_ffel_cumulative_default"      ~ "ED-Held FFEL",
+      loan_type == "federally_managed_cumulative_default" ~ "Federally Managed",
+      .default = loan_type
+    )
+  ) |>
+  ggplot(aes(x = time_index, y = cumulative_default,
+             color = loan_type, group = loan_type)) +
+  geom_vline(xintercept = cares_cross, linetype = "dashed",
+             color = "#666666", linewidth = 0.7) +
+  annotate("text", x = cares_cross + 0.5,
+           y = 155, label = "CARES Act", size = 2.4, color = "#555555", hjust = 0) +
+  geom_line(linewidth = 1.2) +
+  scale_x_continuous(
+    breaks = seq(1, nrow(cumulative_across_loans), by = 4),
+    labels = cumulative_across_loans$time[seq(1, nrow(cumulative_across_loans), by = 4)]
+  ) +
+  scale_y_continuous(labels = label_dollar(suffix = "B", accuracy = 1)) +
+  scale_color_manual(values = c(
+    "Direct Loan"        = "#C0392B",
+    "FFEL"               = "#8E44AD",
+    "ED-Held FFEL"       = "#27AE60",
+    "Federally Managed"  = "#2980B9"
+  )) +
+  labs(x = "Fiscal Quarter", y = "Cumulative Default ($ billions)", color = "Loan Type") +
+  stat184_theme +
+  theme(legend.position = "right", legend.text = element_text(size = 7))
+```
+
+This graph is more extensive and supports the trend we observed for direct loans, now shown across all four loan types. The cumulative default for ED-Held FFEL loans follows a similar pattern to direct loans through the CARES period. However the same is not true for the federally managed FFEL portfolio. Its cumulative default neither fluctuated as sharply during the pandemic nor recovered in the same way. Instead it underwent a steady, gradual decline throughout the entire period. This is consistent with the fact that FFEL loans were discontinued in 2010, making the FFEL portfolio a closed book that shrinks over time as loans are paid off, forgiven, or resolved.
+
+## Quarterly Default Rate {#sec-fig5}
+
+```{r}
+#| label: fig-default-rate
+#| fig-cap: "Quarterly default rate — percentage of prior-quarter repayment borrowers entering default, FY2015–FY2023. Green shading marks the CARES Act / administrative forbearance period during which new defaults were legally prohibited."
+#| fig-alt: "Area-line chart. Default rate fluctuates between 1.0 and 2.5 percent pre-pandemic, with minor peaks in 2016 and 2019. The rate drops abruptly to near zero at FY2020 Q3 and remains there through FY2023 Q3. A green shaded region marks this zero-rate period."
+#| fig-width: 6.5
+#| fig-height: 3.5
+
+# Primary Author: Ammar Sheikh | Reviewed by: [Member A]
+# Source file: fig5_default_rate.R
+
+cares_start_idx <- min(clean_defaults$time_index[clean_defaults$is_cares_era])
+cares_end_idx   <- max(clean_defaults$time_index)
+
+clean_defaults |>
+  ggplot(aes(x = time_index, y = default_rate_pct)) +
+  annotate("rect",
+    xmin = cares_start_idx - 0.5, xmax = cares_end_idx + 0.5,
+    ymin = -Inf, ymax = Inf, fill = "#2ECC71", alpha = 0.12
+  ) +
+  geom_area(fill = "#C0392B", alpha = 0.18) +
+  geom_line(color = "#C0392B", linewidth = 1.3) +
+  geom_point(
+    data = filter(clean_defaults, !is_cares_era),
+    color = "#C0392B", size = 1.4
+  ) +
+  annotate("text",
+    x     = cares_start_idx + (cares_end_idx - cares_start_idx) / 2,
+    y     = max(clean_defaults$default_rate_pct, na.rm = TRUE) * 0.85,
+    label = "CARES Act / Admin. Forbearance\n(Mar 2020 – Aug 2023)",
+    size = 2.5, color = "#1A7A45", fontface = "italic"
+  ) +
+  scale_x_continuous(
+    breaks = seq(1, nrow(clean_defaults), by = 3),
+    labels = clean_defaults$time[seq(1, nrow(clean_defaults), by = 3)]
+  ) +
+  scale_y_continuous(labels = label_percent(scale = 1, accuracy = 0.1)) +
+  labs(x = "Fiscal Quarter", y = "Default Rate (% of Borrowers)") +
+  stat184_theme
+```
+
+One limitation of looking at raw default dollar amounts is that the overall portfolio also grew significantly over this period, so part of any increase in default dollars simply reflects a larger pool of loans. This graph addresses that by showing the default rate as a percentage of borrowers in repayment from the prior quarter. From FY2015 through FY2020 Q2 the rate ranged between approximately 1.0 and 2.5 percent per quarter, with minor peaks in 2016 and 2019. As we can observe, this drops to effectively zero in FY2020 Q3 and stays there through FY2023 Q3 under the CARES prohibition on new defaults. The concern with this metric going forward, given the cumulative default surge to \$141.7 billion seen in FY2026 Q1 (see @sec-fig1), is that the post-pause default rate has likely returned to or exceeded its pre-pandemic levels as delayed defaults materialize.
+
+\newpage
+
+# Portfolio Snapshot: Key Periods Compared
+
+```{r}
+#| label: tbl-snapshot
+#| tbl-cap: "Direct Loan portfolio snapshots at four pivotal policy moments ($ billions unless noted). Source: FSA Data Center / NSLDS."
+
+snapshot_data <- cleaned_dlp |>
+  filter(
+    (fiscal_year == 2019 & quarter_clean == "Q4") |
+    (fiscal_year == 2021 & quarter_clean == "Q3") |
+    (fiscal_year == 2024 & quarter_clean == "Q1") |
+    (fiscal_year == 2026 & quarter_clean == "Q1")
+  ) |>
+  mutate(
+    Period = c(
+      "Pre-Pandemic (FY2019 Q4)",
+      "CARES Peak (FY2021 Q3)",
+      "Post-CARES (FY2024 Q1)",
+      "Latest (FY2026 Q1)"
+    )
+  ) |>
+  select(Period, repayment, forbearance, deferment, cumulative_in_default) |>
+  mutate(across(where(is.numeric), ~ round(.x, 1)))
+
+names(snapshot_data) <- c("Period", "Repayment ($B)", "Forbearance ($B)",
+                           "Deferment ($B)", "Cumul. Default ($B)")
+
+kable(snapshot_data, booktabs = TRUE, linesep = "", align = c("l","r","r","r","r")) |>
+  kable_styling(latex_options = c("striped", "hold_position"), font_size = 9) |>
+  column_spec(1, bold = TRUE, width = "2in") |>
+  row_spec(4, bold = TRUE, color = "#C0392B")
+```
+
+Table 2 brings together these observations in a single snapshot across four critical moments. The scale of the CARES intervention becomes clearer when the numbers are placed side by side. Repayment fell from \$685.5 billion before the pandemic to just \$16.7 billion at the peak of the forbearance period, a reduction of over 97 percent. Forbearance went in the opposite direction, from \$122.9 billion to \$967.3 billion. The most recent data point for FY2026 Q1 is highlighted in red because it shows cumulative default at \$141.7 billion, the highest figure in the dataset and a sharp jump from \$83.1 billion just one quarter prior.
+
+\newpage
+
+# Team Member Analyses
+
+## Debt Growth Over Time — Soham {#sec-soham}
+
+<!-- SOHAM: Add your narrative introduction here (2-3 sentences setting up what the reader is about to see) -->
+
+<!-- SOHAM: Paste your data loading chunk below. Use this header format:
+```{r}
+#| label: load-soham-data
+#| include: false
+
+# Primary Author: Soham | Reviewed by: [Member Name]
+# Plan: [describe what you are loading and why]
+# Source file: [your R script filename]
+
+# your code here
+```
+-->
+
+<!-- SOHAM: Paste your visualization chunks below, one per figure, each with:
+- #| label: fig-soham-1 (increment for each figure)
+- #| fig-cap: "..."
+- #| fig-alt: "..."
+- Primary Author / Reviewed by comment
+-->
+
+<!-- SOHAM: After each figure, write your narrative observation in your own words.
+Start with what you observe from the graph, then explain what it means. -->
+
+## Repayment Plan Breakdown — Jack {#sec-jack}
+
+<!-- JACK: Add your narrative introduction here (2-3 sentences setting up what the reader is about to see) -->
+
+<!-- JACK: Paste your data loading chunk below. Use this header format:
+```{r}
+#| label: load-jack-data
+#| include: false
+
+# Primary Author: Jack | Reviewed by: [Member Name]
+# Plan: [describe what you are loading and why]
+# Source file: [your R script filename]
+
+# your code here
+```
+-->
+
+<!-- JACK: Paste your visualization chunks below, one per figure, each with:
+- #| label: fig-jack-1 (increment for each figure)
+- #| fig-cap: "..."
+- #| fig-alt: "..."
+- Primary Author / Reviewed by comment
+-->
+
+<!-- JACK: After each figure, write your narrative observation in your own words.
+Start with what you observe from the graph, then explain what it means. -->
+
+# Additional Exploratory Analyses
+
+## Recipients vs. Dollars: Divergence in Default Balances {#sec-rec1}
+
+```{r}
+#| label: fig-rec1
+#| fig-cap: "Average outstanding default balance per defaulter ($ thousands), Direct Loans, FY2013–FY2026. Rising trend indicates borrowers who default carry progressively larger balances over time."
+#| fig-alt: "Area-line chart showing average debt per defaulter rising from roughly 14 thousand dollars in 2013 to over 23 thousand dollars by 2026, with a notable plateau during the CARES forbearance period."
+#| fig-width: 6.5
+#| fig-height: 3.5
+
+# Primary Author: [Member C] | Reviewed by: [Member A]
+# Source file: rec1_recipients_vs_dollars_divergence.R
+
+raw_dl_recip |>
+  ggplot(aes(x = time_index, y = avg_debt_per_defaulter_k)) +
+  geom_area(fill = "#8E44AD", alpha = 0.15) +
+  geom_line(color = "#8E44AD", linewidth = 1.3) +
+  scale_x_continuous(
+    breaks = seq(1, nrow(raw_dl_recip), by = 4),
+    labels = raw_dl_recip$time[seq(1, nrow(raw_dl_recip), by = 4)]
+  ) +
+  scale_y_continuous(labels = label_dollar(suffix = "K", accuracy = 1)) +
+  labs(x = "Fiscal Quarter", y = "Avg. Default Balance per Borrower ($K)") +
+  stat184_theme
+```
+
+As we can observe in this graph, the average outstanding default balance per borrower has risen consistently from approximately \$14,000 in FY2013 to over \$23,000 by FY2026. This tells a different story than the raw default dollar totals. Not only are more borrowers in default, but each borrower in default is carrying a larger balance than before. This has a practical implication: rehabilitation and repayment programs become harder to sustain as the individual debt burden grows, since the monthly payments required to work out of default become proportionally higher.
+
+## Total Portfolio Size and Default Share {#sec-rec2}
+
+```{r}
+#| label: fig-rec2
+#| fig-cap: "Cumulative default as a percentage of total Direct Loan portfolio outstanding, FY2013–FY2026. The dashed line marks the pre-pandemic peak default share. The post-CARES surge brings default share above the pre-pandemic maximum."
+#| fig-alt: "Area-line chart showing default share as a percentage of total portfolio. The share rises from roughly 4 percent in 2013 to about 9.5 percent by early 2020, drops during the CARES forbearance period, then surges above the pre-pandemic peak to around 8 to 10 percent by FY2026 Q1."
+#| fig-width: 6.5
+#| fig-height: 3.5
+
+# Primary Author: [Member A] | Reviewed by: [Member C]
+# Source file: rec2_total_portfolio_default_share.R
+
+pre_pandemic_peak <- max(
+  raw_dl_total$default_pct_of_total[raw_dl_total$federal_fiscal_year < 2020],
+  na.rm = TRUE
+)
+
+raw_dl_total |>
+  ggplot(aes(x = time_index, y = default_pct_of_total)) +
+  geom_area(fill = "#C0392B", alpha = 0.18) +
+  geom_line(color = "#C0392B", linewidth = 1.3) +
+  geom_hline(yintercept = pre_pandemic_peak,
+             linetype = "dashed", color = "#888888", linewidth = 0.6) +
+  annotate("text", x = 4, y = pre_pandemic_peak + 0.3,
+           label = "Pre-pandemic peak", size = 2.5, color = "#888888") +
+  scale_x_continuous(
+    breaks = seq(1, nrow(raw_dl_total), by = 4),
+    labels = raw_dl_total$time[seq(1, nrow(raw_dl_total), by = 4)]
+  ) +
+  scale_y_continuous(labels = label_percent(scale = 1, accuracy = 0.1)) +
+  labs(x = "Fiscal Quarter", y = "Default Share of Total Portfolio (%)") +
+  stat184_theme
+```
+
+Since the overall Direct Loan portfolio has grown significantly since 2013, it is worth asking whether the increase in cumulative default simply reflects a bigger pool of loans rather than a genuine worsening in borrower outcomes. This graph normalizes cumulative default as a share of the total portfolio to address that. The default share peaked at around 9 to 10 percent pre-pandemic, declined through the CARES period, and has now risen sharply again post-2023. This confirms that the recent surge in cumulative default is not just an artifact of a larger portfolio. The default share is approaching or exceeding its pre-pandemic peak, which means the *intensity* of default relative to the portfolio size is genuinely increasing.
+
+## In-School Enrollment Seasonality {#sec-rec3}
+
+```{r}
+#| label: fig-rec3
+#| fig-cap: "Average Direct Loan in-school balance by fiscal quarter (FY2013–FY2019, pre-pandemic). Q1 (October–December) and Q2 (January–March) consistently carry higher in-school balances, reflecting fall and spring enrollment peaks."
+#| fig-alt: "Bar chart with four bars for Q1 through Q4. Q1 is tallest at approximately 149 billion dollars, Q2 is second at approximately 154 billion dollars, and Q3 and Q4 are lower at roughly 115 and 135 billion dollars respectively."
+#| fig-width: 5.5
+#| fig-height: 3.2
+
+# Primary Author: [Member B] | Reviewed by: [Member C]
+# Source file: rec3_inschool_seasonality.R
+
+seasonal_avg |>
+  ggplot(aes(x = quarter_clean, y = avg_in_school, fill = quarter_clean)) +
+  geom_col(width = 0.6, alpha = 0.88) +
+  geom_text(
+    aes(label = dollar(avg_in_school, suffix = "B", accuracy = 1)),
+    vjust = -0.4, size = 3, fontface = "bold"
+  ) +
+  scale_fill_manual(values = c(
+    Q1 = "#1B3A5C", Q2 = "#2E75B6", Q3 = "#7FB3D9", Q4 = "#C6DCF0"
+  )) +
+  scale_y_continuous(
+    labels    = label_dollar(suffix = "B", accuracy = 1),
+    expand    = expansion(mult = c(0, 0.12))
+  ) +
+  labs(x = "Fiscal Quarter (within year)", y = "Avg. In-School Balance ($ billions)") +
+  stat184_theme +
+  theme(legend.position = "none", panel.grid.major.x = element_blank())
+```
+
+The In-School category in the portfolio data follows a clear seasonal rhythm tied to the academic calendar. Q1 (October through December) and Q2 (January through March) align with the fall and spring semesters and consistently carry higher in-school balances. Q3 and Q4 are summer-heavy quarters and show lower in-school balances as fewer students are enrolled. This pattern is important to keep in mind when interpreting any single-quarter snapshot of the portfolio, since a Q3 reading will structurally show lower in-school activity than a Q1 reading regardless of any real change in enrollment.
+
+## FY2026 Q1 Default Surge {#sec-rec5}
+
+```{r}
+#| label: fig-rec5
+#| fig-cap: "Quarter-over-quarter change in Direct Loan cumulative default ($ billions). Blue bars represent the pre-pandemic era, green bars the CARES/administrative forbearance era, and red bars the post-payment-pause era. The FY2026 Q1 bar represents the largest single-quarter increase in the dataset."
+#| fig-alt: "Bar chart of quarter-over-quarter changes in cumulative default. Pre-pandemic bars cluster near 3 to 4 billion dollars positive. CARES-era bars are negative. The final post-pause red bar in FY2026 Q1 dwarfs all others at approximately 58 billion dollars."
+#| fig-width: 6.5
+#| fig-height: 3.5
+
+# Primary Author: [Member C] | Reviewed by: [Member B]
+# Source file: rec5_fy2026_default_surge.R
+
+clean_surge |>
+  filter(!is.na(qoq_default_change)) |>
+  mutate(
+    era = case_when(
+      post_pause ~ "Post-Pause Era",
+      federal_fiscal_year >= 2020 ~ "CARES Era",
+      TRUE ~ "Pre-Pandemic"
+    )
+  ) |>
+  ggplot(aes(x = time_index, y = qoq_default_change, fill = era)) +
+  geom_col(width = 0.85, alpha = 0.88) +
+  geom_hline(yintercept = 0, color = "#444444", linewidth = 0.5) +
+  scale_fill_manual(values = c(
+    "Pre-Pandemic"   = "#2980B9",
+    "CARES Era"      = "#27AE60",
+    "Post-Pause Era" = "#C0392B"
+  )) +
+  scale_x_continuous(
+    breaks = seq(1, nrow(filter(clean_surge, !is.na(qoq_default_change))), by = 4),
+    labels = (clean_surge |> filter(!is.na(qoq_default_change)))$time[
+      seq(1, nrow(filter(clean_surge, !is.na(qoq_default_change))), by = 4)
+    ]
+  ) +
+  scale_y_continuous(labels = label_dollar(suffix = "B", accuracy = 1)) +
+  labs(x = "Fiscal Quarter",
+       y  = "QoQ Change in Cumulative Default ($ billions)",
+       fill = "Policy Era") +
+  stat184_theme +
+  theme(legend.position = "bottom")
+```
+
+This graph makes the FY2026 Q1 situation unmistakable. The pre-pandemic bars across the blue region each represent typical quarterly increments of around \$3 to \$5 billion in cumulative default. The green CARES-era bars are negative, confirming that cumulative default was actually shrinking during the forbearance period as no new defaults were being added while some existing ones resolved. Then in FY2026 Q1 the red bar reaches approximately \$58.6 billion, more than ten times the typical pre-pandemic increment. This is the single most consequential observation in the analysis. Three years of suspended defaults are materializing in a very compressed timeframe, and FY2026 Q1 is where that compression becomes clearly visible in the data.
+
+\newpage
+
+# Summary
+
+This analysis covers federal student loan default trends from FY2013 through FY2026 Q1, and the picture that emerges is one shaped almost entirely by two forces: the long steady growth of the Direct Loan program and the extraordinary disruption of the CARES Act.
+
+Prior to the pandemic, cumulative default grew at roughly \$4 to \$5 billion per quarter and the default rate held between 1.5 and 2.0 percent of repayment borrowers. The CARES Act in March 2020 changed this completely, prohibiting new defaults for over three years and temporarily reducing cumulative default as existing defaults resolved faster than new ones could accumulate.
+
+Looking across loan types, the FFEL portfolio tells a structurally different story. Because FFEL loans were discontinued in 2010, that portfolio has been in a steady long-term decline throughout the observation window. It did not experience the sharp CARES-era movements seen in the Direct Loan data.
+
+The most consequential finding in this analysis is the FY2026 Q1 surge, where cumulative default jumped by \$58.6 billion in a single quarter. This represents three years of suspended defaults now materializing in a compressed timeframe. Alongside this, the average outstanding balance per defaulter has risen from approximately \$14,000 in 2013 to over \$23,000 by 2026, meaning each individual default is also harder to resolve than it was a decade ago.
+
+# References
+
+U.S. Department of Education, Federal Student Aid (FSA) Data Center. (2026). *Federal Student Loan Portfolio: Portfolio by Loan Status* [Data set]. National Student Loan Data System (NSLDS). https://studentaid.gov/data-center/student/portfolio
+
+U.S. Department of Education, Federal Student Aid (FSA) Data Center. (2026). *Direct Loans Entering Default* [Data set]. National Student Loan Data System (NSLDS). https://studentaid.gov/data-center/student/portfolio
+
+U.S. Congress. (2020). *Coronavirus Aid, Relief, and Economic Security (CARES) Act*, Pub. L. No. 116-136, 134 Stat. 281.
+
+# Author Contribution
+
+*[To be completed by the team using the CRediT Contributor Role Taxonomy: https://credit.niso.org/]*
+
+| Role | Contributor(s) |
+|------|----------------|
+| Conceptualization | |
+| Data Curation | |
+| Formal Analysis | |
+| Visualization | |
+| Writing – Original Draft | |
+| Writing – Review & Editing | |
+
+\newpage
+
+# Code Appendix
+
+All code used in this analysis is presented below. Code is organized by figure and follows the Tidyverse Style Guide.
+
+```{r}
+#| label: appendix-setup
+#| echo: true
+#| eval: false
+#| code-fold: false
+
+# setup chunk (see chunk 'setup' at top of document)
+library(readxl); library(tidyverse); library(ggplot2)
+library(scales); library(knitr); library(kableExtra)
+```
+
+The complete source code for this analysis is organized across the following R script files in the project repository. Each file corresponds to a figure or analysis section and includes author and reviewer headers per the code chunk guidelines.
+
+- `Protfolio_by_loan_status_direct_loans.R` — Figures 1 and 3 (Direct Loan status trends, deferment/forbearance rate of change)
+- `entering_default_dl_analysis.R` — Figure 2 (Dollars entering default)
+- `cumulative_defaults_across_loans.R` — Figure 4 (Cumulative defaults across loan types)
+- `fig5_default_rate.R` — Figure 5 (Quarterly default rate)
+- `protfolio_by_loan_status_ed_held_ffel.R` — ED-Held FFEL loan status trends
+- `rec1_recipients_vs_dollars_divergence.R` — Recommendation 1 (Divergence analysis)
+- `rec2_total_portfolio_default_share.R` — Recommendation 2 (Default share of total portfolio)
+- `rec3_inschool_seasonality.R` — Recommendation 3 (In-school seasonality)
+- `rec4_ffel_runoff.R` — Recommendation 4 (FFEL portfolio runoff)
+- `rec5_fy2026_default_surge.R` — Recommendation 5 (FY2026 Q1 default surge)
+
+```{r}
+#| label: appendix-libraries
+#| echo: true
+#| eval: false
+
+# Style Guide: Tidyverse Style Guide (https://style.tidyverse.org/)
+# Primary Author: [All Members] | Reviewed by: [All Members]
+library(readxl)
+library(tidyverse)
+library(ggplot2)
+library(scales)
+library(knitr)
+library(kableExtra)
+```
+
+```{r}
+#| label: appendix-paths
+#| echo: true
+#| eval: false
+
+# Shared file paths — update to your local or repo-relative path
+portfolio_fp <- "path/to/PortfoliobyLoanStatus.xls"
+defaults_fp  <- "path/to/DLEnteringDefaults.xls"
+
+# Shared ggplot theme applied to all figures
+stat184_theme <- theme_minimal(base_size = 10) +
+  theme(
+    plot.title       = element_text(face = "bold", color = "#1B3A5C", size = 11),
+    plot.subtitle    = element_text(color = "#555555", size = 8.5),
+    plot.caption     = element_text(color = "#888888", size = 7),
+    axis.text.x      = element_text(angle = 45, hjust = 1, size = 7),
+    panel.grid.minor = element_blank()
+  )
+```
