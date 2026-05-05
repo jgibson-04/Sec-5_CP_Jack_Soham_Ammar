@@ -1,4 +1,5 @@
 # Team Guide — Federal Student Loan Default Analysis
+Note I dont care how we implement or format the final report this is just my suggestion as per my formatting im open to anything and this guide is only meant to make understanding the structure easier, so it is convinient for everyone - Ammar.
 ## STAT 184 Spring 2026
 
 This guide covers everything Soham and Jack need to add their sections to the QMD, as well as the GitHub workflow the whole team needs to follow for the rubric. Read through once before you start coding.
