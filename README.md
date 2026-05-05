@@ -1,4 +1,5 @@
 # Federal Student Loan Default Trends
+Note: As in the team guide file, Im open to changing or going with anyone in thr groups decision on how to structure the readme, this is just a template i reached upon looking at the rubric. - Ammar.
 ## STAT 184 Course Project — Spring 2026
 
 **Team:** Ammar, Soham, Jack
