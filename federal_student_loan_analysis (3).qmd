@@ -731,30 +731,173 @@ Table 2 brings together these observations in a single snapshot across four crit
 
 ## Debt Growth Over Time — Soham {#sec-soham}
 
-<!-- SOHAM: Add your narrative introduction here (2-3 sentences setting up what the reader is about to see) -->
+The Direct Loan portfolio has grown significantly since 2013, both in total size 
+and in how borrowers are distributed across loan statuses. This section looks at 
+that growth and how the composition of the portfolio has shifted, particularly 
+around the CARES Act period.
 
-<!-- SOHAM: Paste your data loading chunk below. Use this header format:
 ```{r}
 #| label: load-soham-data
 #| include: false
 
-# Primary Author: Soham | Reviewed by: [Member Name]
-# Plan: [describe what you are loading and why]
-# Source file: [your R script filename]
+# Primary Author: Soham | Reviewed by: Ammar
+# Plan: build a tidy version of cleaned_dlp with a total portfolio column
+# Code: rowSums across the six status columns, then pivot for plotting
+# Improve: used rowSums instead of adding columns manually to handle NAs
+# Polish: glimpse() to confirm types before moving on
 
-# your code here
+soham_data <- cleaned_dlp |>
+  select(
+    fiscal_year, quarter_clean, time, time_index,
+    in_School, grace, repayment, deferment,
+    forbearance, cumulative_in_default
+  ) |>
+  mutate(
+    total_portfolio = rowSums(
+      across(c(in_School, grace, repayment, deferment,
+               forbearance, cumulative_in_default)),
+      na.rm = TRUE
+    )
+  )
+
+glimpse(soham_data)
+
+# annual averages for growth rate chart
+soham_yearly <- soham_data |>
+  group_by(fiscal_year) |>
+  summarize(avg_total = mean(total_portfolio, na.rm = TRUE), .groups = "drop") |>
+  mutate(growth_pct = (avg_total - lag(avg_total)) / lag(avg_total) * 100) |>
+  filter(!is.na(growth_pct))
 ```
--->
+```{r}
+#| label: fig-soham-1
+#| fig-cap: "Total Direct Loan portfolio by loan status ($ billions), FY2013 Q3 – FY2026 Q1. Stacked areas show how the composition has shifted alongside overall portfolio growth. Dashed line marks CARES Act implementation (March 2020)."
+#| fig-alt: "Stacked area chart with six loan statuses from 2013 to 2026. Repayment dominates before 2020 then collapses as Forbearance takes over during the CARES era. Total portfolio height grows from around 700 billion to over 1.7 trillion dollars."
+#| fig-width: 6.5
+#| fig-height: 3.8
 
-<!-- SOHAM: Paste your visualization chunks below, one per figure, each with:
-- #| label: fig-soham-1 (increment for each figure)
-- #| fig-cap: "..."
-- #| fig-alt: "..."
-- Primary Author / Reviewed by comment
--->
+# Primary Author: Soham | Reviewed by: Jack
 
-<!-- SOHAM: After each figure, write your narrative observation in your own words.
-Start with what you observe from the graph, then explain what it means. -->
+soham_data |>
+  pivot_longer(
+    cols      = c(in_School, grace, repayment, deferment,
+                  forbearance, cumulative_in_default),
+    names_to  = "status",
+    values_to = "balance"
+  ) |>
+  mutate(
+    status = case_when(
+      status == "in_School"             ~ "In School",
+      status == "grace"                 ~ "Grace",
+      status == "repayment"             ~ "Repayment",
+      status == "deferment"             ~ "Deferment",
+      status == "forbearance"           ~ "Forbearance",
+      status == "cumulative_in_default" ~ "Cumulative in Default",
+      .default = status
+    ),
+    status = factor(status, levels = c(
+      "Cumulative in Default", "Forbearance", "Deferment",
+      "Grace", "In School", "Repayment"
+    ))
+  ) |>
+  ggplot(aes(x = time_index, y = balance, fill = status)) +
+  geom_area(alpha = 0.85) +
+  geom_vline(
+    xintercept = cares_idx, linetype = "dashed",
+    color = "#666666", linewidth = 0.7
+  ) +
+  annotate(
+    "text", x = cares_idx + 0.6,
+    y = max(soham_data$total_portfolio, na.rm = TRUE) * 0.88,
+    label = "CARES Act\n(Mar 2020)", size = 2.4, color = "#555555", hjust = 0
+  ) +
+  scale_x_continuous(
+    breaks = seq(1, nrow(soham_data), by = 4),
+    labels = soham_data$time[seq(1, nrow(soham_data), by = 4)]
+  ) +
+  scale_y_continuous(labels = label_dollar(suffix = "B", accuracy = 1)) +
+  scale_fill_manual(values = c(
+    "Repayment"             = "#8E44AD",
+    "In School"             = "#2980B9",
+    "Grace"                 = "#AED6F1",
+    "Deferment"             = "#E67E22",
+    "Forbearance"           = "#27AE60",
+    "Cumulative in Default" = "#C0392B"
+  )) +
+  labs(x = "Fiscal Quarter", y = "Outstanding Balance ($ billions)", fill = "Loan Status") +
+  stat184_theme +
+  theme(legend.position = "right", legend.text = element_text(size = 7))
+```
+```{r}
+#| label: tbl-soham-stats
+#| tbl-cap: "Descriptive statistics for total portfolio size and selected status categories ($ billions), FY2013 Q3 – FY2026 Q1. Source: FSA Data Center / NSLDS."
+
+# Primary Author: Soham | Reviewed by: Ammar
+
+soham_data |>
+  summarize(
+    across(
+      c(total_portfolio, repayment, forbearance, in_School),
+      list(
+        Min    = ~ round(min(.x,    na.rm = TRUE), 1),
+        Median = ~ round(median(.x, na.rm = TRUE), 1),
+        Mean   = ~ round(mean(.x,   na.rm = TRUE), 1),
+        Max    = ~ round(max(.x,    na.rm = TRUE), 1),
+        SD     = ~ round(sd(.x,     na.rm = TRUE), 1)
+      ),
+      .names = "{.col}__{.fn}"
+    )
+  ) |>
+  pivot_longer(
+    cols = everything(), names_to = c("attribute", "statistic"), names_sep = "__"
+  ) |>
+  pivot_wider(names_from = statistic, values_from = value) |>
+  mutate(
+    attribute = case_when(
+      attribute == "total_portfolio" ~ "Total Portfolio",
+      attribute == "repayment"       ~ "Repayment",
+      attribute == "forbearance"     ~ "Forbearance",
+      attribute == "in_School"       ~ "In School",
+      .default = attribute
+    )
+  ) |>
+  kable(
+    booktabs  = TRUE,
+    linesep   = "",
+    col.names = c("Attribute", "Min", "Median", "Mean", "Max", "SD"),
+    align     = c("l", rep("r", 5))
+  ) |>
+  kable_styling(latex_options = c("striped", "hold_position"), font_size = 9) |>
+  column_spec(1, bold = TRUE, width = "1.7in") |>
+  add_header_above(c(" " = 1, "Summary Statistics ($ billions)" = 5), bold = TRUE)
+```
+```{r}
+#| label: fig-soham-2
+#| fig-cap: "Year-over-year percentage growth in average Direct Loan portfolio size by fiscal year, FY2014 – FY2026. Computed from the annual mean of quarterly totals."
+#| fig-alt: "Bar chart of annual growth rates. Most bars are positive and range from 5 to 25 percent. A negative bar appears in FY2021 at around negative 8 percent. Growth resumes in FY2024 and FY2025."
+#| fig-width: 6.5
+#| fig-height: 3.5
+
+# Primary Author: Soham | Reviewed by: Jack
+
+soham_yearly |>
+  mutate(positive = growth_pct >= 0) |>
+  ggplot(aes(x = factor(fiscal_year), y = growth_pct, fill = positive)) +
+  geom_col(width = 0.7, alpha = 0.88) +
+  geom_hline(yintercept = 0, color = "#444444", linewidth = 0.5) +
+  geom_text(
+    aes(
+      label = paste0(round(growth_pct, 1), "%"),
+      vjust = if_else(growth_pct >= 0, -0.4, 1.2)
+    ),
+    size = 2.6
+  ) +
+  scale_fill_manual(values = c("TRUE" = "#2980B9", "FALSE" = "#C0392B")) +
+  scale_y_continuous(labels = label_percent(scale = 1, accuracy = 0.1)) +
+  labs(x = "Fiscal Year", y = "Year-over-Year Growth (%)") +
+  stat184_theme +
+  theme(legend.position = "none")
+```
 
 ## Repayment Plan Breakdown — Jack {#sec-jack}
 
