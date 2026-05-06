@@ -902,7 +902,7 @@ soham_yearly |>
 ## Repayment Plan Breakdown — Jack {#sec-jack}
 
 <!-- JACK: Add your narrative introduction here (2-3 sentences setting up what the reader is about to see) -->
-
+With time, higher education has become more important in young adult lives. Through changes like the CAREs act, we have seen even more changes with an increase in student loans acquired and a change in how we pay them off. As the Direct Loan portfolio has grown, so too has enrollment in Income-Driven Repayment (IDR) plans, which tie monthly payments to a borrower's income rather than a fixed amortization schedule. 
 <!-- JACK: Paste your data loading chunk below. Use this header format:
 ```{r}
 #| label: load-jack-data
