@@ -1412,12 +1412,12 @@ U.S. Congress. (2020). *Coronavirus Aid, Relief, and Economic Security (CARES) A
 
 | Role | Contributor(s) |
 |------|----------------|
-| Conceptualization | |
-| Data Curation | |
-| Formal Analysis | |
-| Visualization | |
-| Writing – Original Draft | |
-| Writing – Review & Editing | |
+| Conceptualization | Ammar, Soham, Jack |
+| Data Curation | Ammar |
+| Formal Analysis | Ammar (default trends), Soham (debt growth), Jack (repayment plans) |
+| Visualization | Ammar (Figures 1–5), Soham (Figures 6–7), Jack (Figures 8–9) |
+| Writing – Original Draft | Ammar (Sections 1–4), Soham (Section 5.1), Jack (Section 5.2) |
+| Writing – Review & Editing | All members |
 
 \newpage
 
