@@ -45,6 +45,7 @@ library(kableExtra)
 # Replace with your local path, or use a repo-relative path after cloning.
 portfolio_fp  <- "C:\\Users\\ammar\\OneDrive\\Desktop\\personal\\spring 2026\\STAT 184\\project_datasets\\PortfoliobyLoanStatus.xls"
 defaults_fp   <- "C:\\Users\\ammar\\OneDrive\\Desktop\\personal\\spring 2026\\STAT 184\\project_datasets\\DLEnteringDefaults.xls"
+repayment_fp   <- "C:\\Users\\ammar\\OneDrive\\Desktop\\personal\\spring 2026\\STAT 184\\project_datasets\\rep <-DLPortfoliobyRepaymentPlan.xls
 
 # ── Shared theme ───────────────────────────────────────────────────────────────
 stat184_theme <- theme_minimal(base_size = 10) +
@@ -947,7 +948,7 @@ With time, higher education has become more important in young adult lives. Thro
 
 jack_raw_idr <- read_excel(
   path      = portfolio_fp,
-  sheet     = "DLPortfoliobyRepaymentPlan",
+  sheet     = "direct loan",
   skip      = 6,
   col_names = FALSE,
   .name_repair = "unique"
