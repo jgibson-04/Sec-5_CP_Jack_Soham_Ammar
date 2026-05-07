@@ -61,7 +61,7 @@ stat184_theme <- theme_minimal(base_size = 10) +
 #| label: load-direct-loan
 #| include: false
 
-# Primary Author: [Ammar Sheikh] | Reviewed by: [Member B]
+# Primary Author: [Ammar Sheikh] | 
 # Source file: Protfolio_by_loan_status_direct_loans.R
 
 raw_dl <- read_excel(
@@ -95,7 +95,7 @@ glimpse(cleaned_dlp)
 #| label: load-defaults
 #| include: false
 
-# Primary Author: [Ammar Sheikh] | Reviewed by: [Member A]
+# Primary Author: [Ammar Sheikh] | 
 # Source file: entering_default_dl_analysis.R
 
 raw_defaults_full <- read_excel(
@@ -136,7 +136,7 @@ glimpse(clean_defaults)
 #| label: load-all-loans
 #| include: false
 
-# Primary Author: [Ammar Sheikh] | Reviewed by: [Member A]
+# Primary Author: [Ammar Sheikh] | 
 # Source file: cumulative_defaults_across_loans.R
 # Plan: build a helper function to read cumulative default from any sheet,
 #       then map it across all four loan types and join into one tidy frame.
@@ -187,7 +187,7 @@ cumulative_across_loans <- loan_sheets |>
 #| label: load-additional
 #| include: false
 
-# Primary Author: [Ammar Sheikh] | Reviewed by: [Member C]
+# Primary Author: [Ammar Sheikh] |
 # Plan: prepare derived datasets for all five recommended additional analyses
 #       in a single chunk so they are available throughout the document.
 # Code: each dataset is a filtered/mutated version of an already-imported
@@ -546,7 +546,7 @@ It is also worth noting that across the pre-pandemic period, first-time defaults
 #| fig-width: 6.5
 #| fig-height: 3.5
 
-# Primary Author: Ammar Sheikh | Reviewed by: [Member C]
+# Primary Author: Ammar Sheikh | 
 # Source file: Protfolio_by_loan_status_direct_loans.R
 
 cleaned_dlp |>
@@ -598,7 +598,7 @@ To further understand what happened in 2020 to both forbearance and deferment, t
 #| fig-width: 6.5
 #| fig-height: 3.8
 
-# Primary Author: Ammar Sheikh | Reviewed by: [Member B]
+# Primary Author: Ammar Sheikh |
 # Source file: cumulative_defaults_across_loans.R
 
 cares_cross <- which(cumulative_across_loans$time == "2020 Q3")
@@ -653,7 +653,7 @@ This graph is more extensive and supports the trend we observed for direct loans
 #| fig-width: 6.5
 #| fig-height: 3.5
 
-# Primary Author: Ammar Sheikh | Reviewed by: [Member A]
+# Primary Author: Ammar Sheikh | 
 # Source file: fig5_default_rate.R
 
 cares_start_idx <- min(clean_defaults$time_index[clean_defaults$is_cares_era])
@@ -1254,7 +1254,7 @@ From the graph we can observe that the average IDR borrower balance has risen fr
 #| fig-width: 6.5
 #| fig-height: 3.5
 
-# Primary Author: [Member C] | Reviewed by: [Member A]
+# Primary Author: Jack
 # Source file: rec1_recipients_vs_dollars_divergence.R
 
 raw_dl_recip |>
@@ -1281,7 +1281,7 @@ As we can observe in this graph, the average outstanding default balance per bor
 #| fig-width: 6.5
 #| fig-height: 3.5
 
-# Primary Author: [Member A] | Reviewed by: [Member C]
+# Primary Author: Jack
 # Source file: rec2_total_portfolio_default_share.R
 
 pre_pandemic_peak <- max(
@@ -1317,7 +1317,7 @@ Since the overall Direct Loan portfolio has grown significantly since 2013, it i
 #| fig-width: 5.5
 #| fig-height: 3.2
 
-# Primary Author: [Member B] | Reviewed by: [Member C]
+# Primary Author: Jack
 # Source file: rec3_inschool_seasonality.R
 
 seasonal_avg |>
@@ -1350,7 +1350,7 @@ The In-School category in the portfolio data follows a clear seasonal rhythm tie
 #| fig-width: 6.5
 #| fig-height: 3.5
 
-# Primary Author: [Member C] | Reviewed by: [Member B]
+# Primary Author: Jack 
 # Source file: rec5_fy2026_default_surge.R
 
 clean_surge |>
