@@ -2,7 +2,7 @@
 ## STAT 184 Course Project — Spring 2026
 
 **Team:** Ammar, Soham, Jack
-**Section:** [Your section number]
+**Section:** 5
 **Submitted:** May 2026
 
 ---
