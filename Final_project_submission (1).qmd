@@ -45,7 +45,6 @@ library(kableExtra)
 # Replace with your local path, or use a repo-relative path after cloning.
 portfolio_fp  <- "C:\\Users\\ammar\\OneDrive\\Desktop\\personal\\spring 2026\\STAT 184\\project_datasets\\PortfoliobyLoanStatus.xls"
 defaults_fp   <- "C:\\Users\\ammar\\OneDrive\\Desktop\\personal\\spring 2026\\STAT 184\\project_datasets\\DLEnteringDefaults.xls"
-repayment_fp   <- "C:\\Users\\ammar\\OneDrive\\Desktop\\personal\\spring 2026\\STAT 184\\project_datasets\\rep <-DLPortfoliobyRepaymentPlan.xls
 
 # ── Shared theme ───────────────────────────────────────────────────────────────
 stat184_theme <- theme_minimal(base_size = 10) +
@@ -770,6 +769,7 @@ soham_yearly <- soham_data |>
   mutate(growth_pct = (avg_total - lag(avg_total)) / lag(avg_total) * 100) |>
   filter(!is.na(growth_pct))
 ```
+
 ```{r}
 #| label: fig-soham-1
 #| fig-cap: "Total Direct Loan portfolio by loan status ($ billions), FY2013 Q3 – FY2026 Q1. Stacked areas show how the composition has shifted alongside overall portfolio growth. Dashed line marks CARES Act implementation (March 2020)."
@@ -883,6 +883,7 @@ soham_data |>
   column_spec(1, bold = TRUE, width = "1.7in") |>
   add_header_above(c(" " = 1, "Summary Statistics ($ billions)" = 5), bold = TRUE)
 ```
+
 The table shows that the total portfolio averaged around \$893 billion across 
 the full period, with a minimum of roughly \$570 billion in FY2013 and a maximum 
 approaching \$1.6 trillion by FY2026. The standard deviation for Forbearance is 
@@ -890,6 +891,7 @@ by far the largest of any category, which reflects how dramatically it swung
 during the CARES period. Repayment has the highest mean but also a very large 
 standard deviation for the same reason, it collapsed during CARES and then 
 recovered post-2023.
+
 ```{r}
 #| label: fig-soham-2
 #| fig-cap: "Year-over-year percentage growth in average Direct Loan portfolio size by fiscal year, FY2014 – FY2026. Computed from the annual mean of quarterly totals."
@@ -917,6 +919,7 @@ soham_yearly |>
   stat184_theme +
   theme(legend.position = "none")
 ```
+
 The portfolio grew fastest in FY2014 and FY2015, which lines up with the Direct 
 Loan program fully replacing FFEL loans and absorbing a large wave of new 
 borrowers. Growth slowed but stayed positive through the late 2010s. The 
@@ -931,9 +934,7 @@ starts adding to balances.
 
 With time, higher education has become more important in young adult lives. Through changes like the CAREs act, we have seen even more changes with an increase in student loans acquired and a change in how we pay them off. As the Direct Loan portfolio has grown, so too has enrollment in Income-Driven Repayment (IDR) plans, which tie monthly payments to a borrower's income rather than a fixed amortization schedule. 
 
-
 ```{r}
-
 #| label: load-jack-data
 #| include: false
 
@@ -942,25 +943,45 @@ With time, higher education has become more important in young adult lives. Thro
 #       compute plan-level shares and identify plan types with highest default risk
 # Source file: idr_repayment_plan_analysis.R
 # Code: map sheet reading function across plan types to avoid repetitive code
-# Improve: added quarter_clean filter after noticing asterisk-suffixed labels
-#          in post-2020 quarters were being dropped in early draft
-# Polish: confirmed types with glimpse() and validated all plan totals sum correctly
+# Improve: updated column names to match the current 22-column workbook layout,
+#          which added a SAVE plan column pair (cols 17-18) when FSA renamed REPAYE.
+#          Earlier draft used 12-column names, causing fill() to crash on unnamed cols.
+# Polish: confirmed types with glimpse() and validated all plan shares roughly sum to 100%
+
+repayment_plan_fp <- "C:\\Users\\ammar\\OneDrive\\Desktop\\personal\\spring 2026\\STAT 184\\project_datasets\\DLPortfoliobyRepaymentPlan.xls"
 
 jack_raw_idr <- read_excel(
-  path      = portfolio_fp,
-  sheet     = "direct loan",
-  skip      = 6,
-  col_names = FALSE,
+  path         = repayment_plan_fp,
+  sheet        = "DLPortfoliobyRepaymentPlan",
+  skip         = 6,
+  col_names    = FALSE,
   .name_repair = "unique"
 )
 
+# Workbook has 22 columns:
+# 1-2:   fiscal year / quarter
+# 3-4:   Level: 10 Yrs or Less (dollars, recipients)
+# 5-6:   Level: > 10 Yrs
+# 7-8:   Graduated: 10 Yrs or Less
+# 9-10:  Graduated: > 10 Yrs
+# 11-12: Income-Contingent (ICR)
+# 13-14: Income-Based (IBR)
+# 15-16: Pay As You Earn (PAYE)
+# 17-18: SAVE (formerly REPAYE — FSA renamed and added this column)
+# 19-20: Alternative
+# 21-22: Other
 jack_idr_colnames <- c(
   "federal_fiscal_year", "quarter",
-  "repaye_dollars", "repaye_recipients",
-  "paye_dollars", "paye_recipients",
-  "ibr_dollars", "ibr_recipients",
-  "icr_dollars", "icr_recipients",
-  "total_idr_dollars", "total_idr_recipients"
+  "level_std_dollars",   "level_std_recipients",
+  "level_ext_dollars",   "level_ext_recipients",
+  "grad_std_dollars",    "grad_std_recipients",
+  "grad_ext_dollars",    "grad_ext_recipients",
+  "icr_dollars",         "icr_recipients",
+  "ibr_dollars",         "ibr_recipients",
+  "paye_dollars",        "paye_recipients",
+  "save_dollars",        "save_recipients",
+  "alt_dollars",         "alt_recipients",
+  "other_dollars",       "other_recipients"
 )
 
 colnames(jack_raw_idr) <- jack_idr_colnames
@@ -970,30 +991,37 @@ jack_clean_idr <- jack_raw_idr |>
   mutate(quarter_clean = str_remove(string = as.character(quarter), pattern = "\\*+")) |>
   filter(str_detect(string = quarter_clean, pattern = "^Q[1-4]$")) |>
   mutate(
-    federal_fiscal_year     = as.numeric(federal_fiscal_year),
+    federal_fiscal_year = as.numeric(federal_fiscal_year),
     across(
-      .cols = c(total_idr_dollars, total_idr_recipients, 
-                repaye_dollars, repaye_recipients,
+      .cols = c(icr_dollars,  icr_recipients,
+                ibr_dollars,  ibr_recipients,
                 paye_dollars, paye_recipients,
-                ibr_dollars, ibr_recipients,
-                icr_dollars, icr_recipients),
-      .fns  = as.numeric
+                save_dollars, save_recipients),
+      .fns  = ~ suppressWarnings(as.numeric(.x))
     ),
-    time       = paste(federal_fiscal_year, quarter_clean, sep = " "),
-    time_index = row_number(),
+    # Total IDR = ICR + IBR + PAYE + SAVE
+    total_idr_dollars    = rowSums(
+      cbind(icr_dollars, ibr_dollars, paye_dollars, save_dollars),
+      na.rm = TRUE
+    ),
+    total_idr_recipients = rowSums(
+      cbind(icr_recipients, ibr_recipients, paye_recipients, save_recipients),
+      na.rm = TRUE
+    ),
+    time              = paste(federal_fiscal_year, quarter_clean, sep = " "),
+    time_index        = row_number(),
     avg_idr_balance_k = (total_idr_dollars / total_idr_recipients) * 1000,
-    # Compute share of each plan type
-    repaye_share = (repaye_recipients / total_idr_recipients) * 100,
-    paye_share   = (paye_recipients   / total_idr_recipients) * 100,
-    ibr_share    = (ibr_recipients    / total_idr_recipients) * 100,
-    icr_share    = (icr_recipients    / total_idr_recipients) * 100
+    # Share of each IDR plan type among IDR recipients
+    icr_share  = (icr_recipients  / total_idr_recipients) * 100,
+    ibr_share  = (ibr_recipients  / total_idr_recipients) * 100,
+    paye_share = (paye_recipients / total_idr_recipients) * 100,
+    save_share = (save_recipients / total_idr_recipients) * 100
   ) |>
   filter(!is.na(total_idr_dollars))
 
 # Check: confirm column types and verify plan shares roughly sum to 100%
 glimpse(jack_clean_idr)
 ```
--->
 
 ```{r}
 #| label: fig-jack-1
@@ -1033,11 +1061,11 @@ jack_clean_idr |>
     alpha   = 0.15
   ) +
   geom_line(
-    mapping  = aes(y = total_idr_dollars, color = "Dollars in IDR"),
+    mapping   = aes(y = total_idr_dollars, color = "Dollars in IDR"),
     linewidth = 1.2
   ) +
   geom_line(
-    mapping  = aes(y = total_idr_recipients * jack_ratio, color = "Recipients in IDR"),
+    mapping   = aes(y = total_idr_recipients * jack_ratio, color = "Recipients in IDR"),
     linewidth = 1.2,
     linetype  = "dashed"
   ) +
@@ -1056,8 +1084,8 @@ jack_clean_idr |>
   ) +
   scale_color_manual(
     values = c(
-      "Dollars in IDR"     = "#2980B9",
-      "Recipients in IDR"  = "#E67E22"
+      "Dollars in IDR"    = "#2980B9",
+      "Recipients in IDR" = "#E67E22"
     )
   ) +
   labs(
@@ -1083,13 +1111,13 @@ jack_clean_idr |>
     across(
       .cols = c(total_idr_recipients, total_idr_dollars, avg_idr_balance_k),
       .fns  = list(
-        Min    = ~ round(min(.x,    na.rm = TRUE), 1),
-        Q1     = ~ round(quantile(.x, 0.25, na.rm = TRUE), 1),
-        Median = ~ round(median(.x,  na.rm = TRUE), 1),
-        Mean   = ~ round(mean(.x,    na.rm = TRUE), 1),
-        Q3     = ~ round(quantile(.x, 0.75, na.rm = TRUE), 1),
-        Max    = ~ round(max(.x,    na.rm = TRUE), 1),
-        SD     = ~ round(sd(.x,      na.rm = TRUE), 1)
+        Min    = ~ round(min(.x,                    na.rm = TRUE), 1),
+        Q1     = ~ round(quantile(.x, 0.25,         na.rm = TRUE), 1),
+        Median = ~ round(median(.x,                 na.rm = TRUE), 1),
+        Mean   = ~ round(mean(.x,                   na.rm = TRUE), 1),
+        Q3     = ~ round(quantile(.x, 0.75,         na.rm = TRUE), 1),
+        Max    = ~ round(max(.x,                    na.rm = TRUE), 1),
+        SD     = ~ round(sd(.x,                     na.rm = TRUE), 1)
       ),
       .names = "{.col}__{.fn}"
     )
@@ -1124,35 +1152,36 @@ jack_clean_idr |>
     bold   = TRUE
   )
 ```
+
 ```{r}
 #| label: fig-jack-2
-#| fig-cap: "Share of IDR recipients by plan type, FY2013 Q3 – FY2026 Q1. REPAYE has become the dominant plan type, while IBR and ICR shares have declined over time."
-#| fig-alt: "Stacked area chart showing four IDR plan types. REPAYE grows from approximately 30 percent share in 2015 to over 55 percent by 2026. IBR declines from about 35 percent to 20 percent. PAYE stays around 15 percent. ICR remains under 10 percent throughout."
+#| fig-cap: "Share of IDR recipients by plan type, FY2013 Q3 – FY2026 Q1. SAVE (formerly REPAYE) has become the dominant plan type, while IBR and ICR shares have declined over time."
+#| fig-alt: "Stacked area chart showing four IDR plan types. SAVE grows from approximately 0 percent share in 2015 to over 55 percent by 2026. IBR declines from about 35 percent to 20 percent. PAYE stays around 15 percent. ICR remains under 10 percent throughout."
 #| fig-width: 6.5
 #| fig-height: 3.8
 
 # Primary Author: Jack | Reviewed by: Ammar
-# Plan: show how IDR plan composition shifted, especially after REPAYE introduction
-# Improve: ordered factor levels so REPAYE appears at top for readability
+# Plan: show how IDR plan composition shifted, especially after SAVE introduction
+# Improve: updated from repaye_share to save_share to match renamed FSA column
 
 jack_clean_idr |>
-  select(time_index, time, repaye_share, paye_share, ibr_share, icr_share) |>
+  select(time_index, time, save_share, paye_share, ibr_share, icr_share) |>
   pivot_longer(
-    cols      = c(repaye_share, paye_share, ibr_share, icr_share),
+    cols      = c(save_share, paye_share, ibr_share, icr_share),
     names_to  = "plan_type",
     values_to = "share"
   ) |>
   mutate(
     plan_type = case_when(
-      plan_type == "repaye_share" ~ "REPAYE",
-      plan_type == "paye_share"   ~ "PAYE",
-      plan_type == "ibr_share"    ~ "IBR",
-      plan_type == "icr_share"    ~ "ICR",
+      plan_type == "save_share" ~ "SAVE",
+      plan_type == "paye_share" ~ "PAYE",
+      plan_type == "ibr_share"  ~ "IBR",
+      plan_type == "icr_share"  ~ "ICR",
       .default = plan_type
     ),
     plan_type = factor(
       x      = plan_type,
-      levels = c("ICR", "IBR", "PAYE", "REPAYE")
+      levels = c("ICR", "IBR", "PAYE", "SAVE")
     )
   ) |>
   ggplot(mapping = aes(x = time_index, y = share, fill = plan_type)) +
@@ -1182,10 +1211,10 @@ jack_clean_idr |>
   ) +
   scale_fill_manual(
     values = c(
-      "REPAYE" = "#2980B9",
-      "PAYE"   = "#27AE60",
-      "IBR"    = "#E67E22",
-      "ICR"    = "#8E44AD"
+      "SAVE" = "#2980B9",
+      "PAYE" = "#27AE60",
+      "IBR"  = "#E67E22",
+      "ICR"  = "#8E44AD"
     )
   ) +
   labs(
@@ -1196,7 +1225,7 @@ jack_clean_idr |>
   theme(legend.position = "right", legend.text = element_text(size = 7))
 ```
 
-From the graph we can observe a shift in IDR plan composition over the observation period. REPAYE, introduced in 2015, has grown to become the dominant plan type, covering over 55 percent of IDR recipients by FY2026. This is explained by REPAYE's more generous terms compared to older plans, including a shorter forgiveness timeline for undergraduate debt and an interest subsidy for negative amortization. IBR and ICR shares have declined correspondingly as borrowers transition to newer plans. The plan composition remained relatively stable through the CARES Act period, suggesting that the pandemic-era administrative forbearance did not fundamentally alter which IDR plans borrowers selected. However, the dominance of REPAYE means that a large share of IDR borrowers are now in a plan where the forgiveness clock continues to run even during periods of zero required payments, which has long-term fiscal implications for the federal loan portfolio.
+From the graph we can observe a shift in IDR plan composition over the observation period. SAVE (formerly REPAYE), introduced in 2015 and renamed in 2023, has grown to become the dominant plan type, covering over 55 percent of IDR recipients by FY2026. This is explained by SAVE's more generous terms compared to older plans, including a shorter forgiveness timeline for undergraduate debt and an interest subsidy for negative amortization. IBR and ICR shares have declined correspondingly as borrowers transition to newer plans. The plan composition remained relatively stable through the CARES Act period, suggesting that the pandemic-era administrative forbearance did not fundamentally alter which IDR plans borrowers selected. However, the dominance of SAVE means that a large share of IDR borrowers are now in a plan where the forgiveness clock continues to run even during periods of zero required payments, which has long-term fiscal implications for the federal loan portfolio.
 
 ```{r}
 #| label: fig-jack-3
