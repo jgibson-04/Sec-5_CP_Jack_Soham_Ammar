@@ -80,7 +80,7 @@ cleaned_dlp <- cleaned_dlp[-c(1, 2), ] |>
   filter(str_detect(quarter_clean, "^Q[1-4]$")) |>
   mutate(
     fiscal_year           = as.numeric(fiscal_year),
-    across(c(in_School, repayment, deferment, forbearance, cumulative_in_default), as.numeric),
+    across(c(in_School, grace,  repayment, deferment, forbearance, cumulative_in_default, other), as.numeric),
     time                  = paste(fiscal_year, quarter_clean, sep = " "),
     time_index            = row_number()
   ) |>
