@@ -828,6 +828,17 @@ soham_data |>
   stat184_theme +
   theme(legend.position = "right", legend.text = element_text(size = 7))
 ```
+
+From the graph we can observe that the total portfolio grew from around $700 
+billion in FY2013 to over $1.7 trillion by FY2026 Q1. Before 2020, Repayment 
+made up the largest share of that total by a wide margin, which makes sense 
+since most borrowers were actively paying down their loans. The CARES Act 
+completely flipped that, Repayment collapsed in one quarter and Forbearance 
+took over as the dominant category for the next three years. However, the total 
+height of the stacked areas kept rising even during that period, meaning the 
+overall portfolio never stopped growing. New borrowers kept entering through the 
+In School category the whole time.
+
 ```{r}
 #| label: tbl-soham-stats
 #| tbl-cap: "Descriptive statistics for total portfolio size and selected status categories ($ billions), FY2013 Q3 – FY2026 Q1. Source: FSA Data Center / NSLDS."
@@ -871,6 +882,13 @@ soham_data |>
   column_spec(1, bold = TRUE, width = "1.7in") |>
   add_header_above(c(" " = 1, "Summary Statistics ($ billions)" = 5), bold = TRUE)
 ```
+The table shows that the total portfolio averaged around \$893 billion across 
+the full period, with a minimum of roughly \$570 billion in FY2013 and a maximum 
+approaching \$1.6 trillion by FY2026. The standard deviation for Forbearance is 
+by far the largest of any category, which reflects how dramatically it swung 
+during the CARES period. Repayment has the highest mean but also a very large 
+standard deviation for the same reason, it collapsed during CARES and then 
+recovered post-2023.
 ```{r}
 #| label: fig-soham-2
 #| fig-cap: "Year-over-year percentage growth in average Direct Loan portfolio size by fiscal year, FY2014 – FY2026. Computed from the annual mean of quarterly totals."
@@ -898,6 +916,15 @@ soham_yearly |>
   stat184_theme +
   theme(legend.position = "none")
 ```
+The portfolio grew fastest in FY2014 and FY2015, which lines up with the Direct 
+Loan program fully replacing FFEL loans and absorbing a large wave of new 
+borrowers. Growth slowed but stayed positive through the late 2010s. The 
+negative bar in FY2021 is a bit misleading, it is not that the portfolio 
+actually shrank, but that the CARES Act reclassified a lot of repayment 
+balances in a way that pulled the annual average down temporarily. The 
+underlying stock of outstanding debt did not actually shrink. Growth resumes 
+in FY2024 and beyond as borrowers return to repayment and accumulated interest 
+starts adding to balances.
 
 ## Repayment Plan Breakdown — Jack {#sec-jack}
 
@@ -1385,12 +1412,12 @@ U.S. Congress. (2020). *Coronavirus Aid, Relief, and Economic Security (CARES) A
 
 | Role | Contributor(s) |
 |------|----------------|
-| Conceptualization | |
-| Data Curation | |
-| Formal Analysis | |
-| Visualization | |
-| Writing – Original Draft | |
-| Writing – Review & Editing | |
+| Conceptualization | Ammar, Soham, Jack |
+| Data Curation | Ammar |
+| Formal Analysis | Ammar (default trends), Soham (debt growth), Jack (repayment plans) |
+| Visualization | Ammar (Figures 1–5), Soham (Figures 6–7), Jack (Figures 8–9) |
+| Writing – Original Draft | Ammar (Sections 1–4), Soham (Section 5.1), Jack (Section 5.2) |
+| Writing – Review & Editing | All members |
 
 \newpage
 
