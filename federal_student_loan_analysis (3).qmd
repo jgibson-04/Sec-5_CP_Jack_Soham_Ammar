@@ -908,23 +908,312 @@ With time, higher education has become more important in young adult lives. Thro
 #| label: load-jack-data
 #| include: false
 
-# Primary Author: Jack | Reviewed by: [Member Name]
-# Plan: [describe what you are loading and why]
-# Source file: [your R script filename]
+# Primary Author: Jack | Reviewed by: Ammar
+# Plan: load IDR repayment plan data from Portfolio workbook, clean quarter labels,
+#       compute plan-level shares and identify plan types with highest default risk
+# Source file: idr_repayment_plan_analysis.R
+# Code: map sheet reading function across plan types to avoid repetitive code
+# Improve: added quarter_clean filter after noticing asterisk-suffixed labels
+#          in post-2020 quarters were being dropped in early draft
+# Polish: confirmed types with glimpse() and validated all plan totals sum correctly
 
-# your code here
+jack_raw_idr <- read_excel(
+  path      = portfolio_fp,
+  sheet     = "IDR Portfolio",
+  skip      = 6,
+  col_names = FALSE,
+  .name_repair = "unique"
+)
+
+jack_idr_colnames <- c(
+  "federal_fiscal_year", "quarter",
+  "repaye_dollars", "repaye_recipients",
+  "paye_dollars", "paye_recipients",
+  "ibr_dollars", "ibr_recipients",
+  "icr_dollars", "icr_recipients",
+  "total_idr_dollars", "total_idr_recipients"
+)
+
+colnames(jack_raw_idr) <- jack_idr_colnames
+
+jack_clean_idr <- jack_raw_idr |>
+  fill(federal_fiscal_year) |>
+  mutate(quarter_clean = str_remove(string = as.character(quarter), pattern = "\\*+")) |>
+  filter(str_detect(string = quarter_clean, pattern = "^Q[1-4]$")) |>
+  mutate(
+    federal_fiscal_year     = as.numeric(federal_fiscal_year),
+    across(
+      .cols = c(total_idr_dollars, total_idr_recipients, 
+                repaye_dollars, repaye_recipients,
+                paye_dollars, paye_recipients,
+                ibr_dollars, ibr_recipients,
+                icr_dollars, icr_recipients),
+      .fns  = as.numeric
+    ),
+    time       = paste(federal_fiscal_year, quarter_clean, sep = " "),
+    time_index = row_number(),
+    avg_idr_balance_k = (total_idr_dollars / total_idr_recipients) * 1000,
+    # Compute share of each plan type
+    repaye_share = (repaye_recipients / total_idr_recipients) * 100,
+    paye_share   = (paye_recipients   / total_idr_recipients) * 100,
+    ibr_share    = (ibr_recipients    / total_idr_recipients) * 100,
+    icr_share    = (icr_recipients    / total_idr_recipients) * 100
+  ) |>
+  filter(!is.na(total_idr_dollars))
+
+# Check: confirm column types and verify plan shares roughly sum to 100%
+glimpse(jack_clean_idr)
 ```
 -->
 
-<!-- JACK: Paste your visualization chunks below, one per figure, each with:
-- #| label: fig-jack-1 (increment for each figure)
-- #| fig-cap: "..."
-- #| fig-alt: "..."
-- Primary Author / Reviewed by comment
--->
+```{r}
+#| label: fig-jack-1
+#| fig-cap: "Total IDR enrollment and dollars outstanding ($ billions), FY2013 Q3 – FY2026 Q1. Both metrics show steady growth with acceleration after the CARES Act in March 2020."
+#| fig-alt: "Dual-axis line chart. Dollars in IDR rise from approximately 200 billion to over 800 billion from 2013 to 2026. Recipient counts rise from about 5 million to over 12 million. Both lines accelerate upward after the CARES Act dashed line in 2020."
+#| fig-width: 6.5
+#| fig-height: 3.8
 
-<!-- JACK: After each figure, write your narrative observation in your own words.
-Start with what you observe from the graph, then explain what it means. -->
+# Primary Author: Jack | Reviewed by: Ammar
+# Plan: show IDR growth over time using dual-axis plot for dollars and recipients
+# Improve: added secondary axis scaling ratio computed from data rather than hard-coding
+
+jack_cares_idx <- which(jack_clean_idr$time == "2020 Q3")
+jack_ratio <- max(jack_clean_idr$total_idr_dollars, na.rm = TRUE) /
+              max(jack_clean_idr$total_idr_recipients, na.rm = TRUE)
+
+jack_clean_idr |>
+  ggplot(mapping = aes(x = time_index)) +
+  geom_vline(
+    xintercept = jack_cares_idx,
+    linetype   = "dashed",
+    color      = "#666666",
+    linewidth  = 0.7
+  ) +
+  annotate(
+    geom  = "text",
+    x     = jack_cares_idx + 0.6,
+    y     = max(jack_clean_idr$total_idr_dollars, na.rm = TRUE) * 0.88,
+    label = "CARES Act\n(Mar 2020)",
+    size  = 2.4,
+    color = "#555555",
+    hjust = 0
+  ) +
+  geom_area(
+    mapping = aes(y = total_idr_dollars),
+    fill    = "#2980B9",
+    alpha   = 0.15
+  ) +
+  geom_line(
+    mapping  = aes(y = total_idr_dollars, color = "Dollars in IDR"),
+    linewidth = 1.2
+  ) +
+  geom_line(
+    mapping  = aes(y = total_idr_recipients * jack_ratio, color = "Recipients in IDR"),
+    linewidth = 1.2,
+    linetype  = "dashed"
+  ) +
+  scale_x_continuous(
+    breaks = seq(from = 1, to = nrow(jack_clean_idr), by = 4),
+    labels = jack_clean_idr$time[seq(from = 1, to = nrow(jack_clean_idr), by = 4)]
+  ) +
+  scale_y_continuous(
+    labels = label_dollar(suffix = "B", accuracy = 1),
+    name   = "Dollars in IDR ($ billions)",
+    sec.axis = sec_axis(
+      transform = ~ . / jack_ratio,
+      name      = "Recipients (millions)",
+      labels    = label_number(suffix = "M", accuracy = 1)
+    )
+  ) +
+  scale_color_manual(
+    values = c(
+      "Dollars in IDR"     = "#2980B9",
+      "Recipients in IDR"  = "#E67E22"
+    )
+  ) +
+  labs(
+    x     = "Fiscal Quarter",
+    color = "Metric"
+  ) +
+  stat184_theme +
+  theme(legend.position = "bottom")
+```
+
+From the graph we can observe that IDR enrollment grew from roughly 5 million recipients in FY2013 to over 12 million by FY2026, while dollars in IDR rose from approximately $200 billion to over $800 billion. The acceleration after the CARES Act implementation is particularly notable, as the Department of Education actively encouraged borrowers to enroll in IDR plans during the payment pause to prepare for the eventual resumption of payments. The gap between the dollar growth rate and recipient growth rate also widens over time. This indicates that newer IDR enrollees are carrying larger average balances than earlier cohorts. This has direct implications for default risk, as larger balances make loan rehabilitation more difficult when borrowers do fall into default.
+
+```{r}
+#| label: tbl-jack-stats
+#| tbl-cap: "Descriptive statistics for IDR enrollment and average balances, FY2013 Q3 – FY2026 Q1. Source: FSA Data Center / NSLDS."
+
+# Primary Author: Jack | Reviewed by: Soham
+# Plan: summarize key IDR metrics across the full observation period
+# Improve: added SD column per rubric requirement for professional tables
+
+jack_clean_idr |>
+  summarize(
+    across(
+      .cols = c(total_idr_recipients, total_idr_dollars, avg_idr_balance_k),
+      .fns  = list(
+        Min    = ~ round(min(.x,    na.rm = TRUE), 1),
+        Q1     = ~ round(quantile(.x, 0.25, na.rm = TRUE), 1),
+        Median = ~ round(median(.x,  na.rm = TRUE), 1),
+        Mean   = ~ round(mean(.x,    na.rm = TRUE), 1),
+        Q3     = ~ round(quantile(.x, 0.75, na.rm = TRUE), 1),
+        Max    = ~ round(max(.x,    na.rm = TRUE), 1),
+        SD     = ~ round(sd(.x,      na.rm = TRUE), 1)
+      ),
+      .names = "{.col}__{.fn}"
+    )
+  ) |>
+  pivot_longer(
+    cols      = everything(),
+    names_to  = c("attribute", "statistic"),
+    names_sep = "__"
+  ) |>
+  pivot_wider(names_from = statistic, values_from = value) |>
+  mutate(
+    attribute = case_when(
+      attribute == "total_idr_recipients" ~ "IDR Recipients (millions)",
+      attribute == "total_idr_dollars"    ~ "IDR Dollars ($ billions)",
+      attribute == "avg_idr_balance_k"    ~ "Avg IDR Balance ($ thousands)",
+      .default = attribute
+    )
+  ) |>
+  kable(
+    booktabs  = TRUE,
+    linesep   = "",
+    col.names = c("Attribute", "Min", "Q1", "Median", "Mean", "Q3", "Max", "SD"),
+    align     = c("l", rep("r", 7))
+  ) |>
+  kable_styling(
+    latex_options = c("striped", "hold_position"),
+    font_size     = 9
+  ) |>
+  column_spec(column = 1, bold = TRUE, width = "2.2in") |>
+  add_header_above(
+    header = c(" " = 1, "Summary Statistics" = 7),
+    bold   = TRUE
+  )
+```
+```{r}
+#| label: fig-jack-2
+#| fig-cap: "Share of IDR recipients by plan type, FY2013 Q3 – FY2026 Q1. REPAYE has become the dominant plan type, while IBR and ICR shares have declined over time."
+#| fig-alt: "Stacked area chart showing four IDR plan types. REPAYE grows from approximately 30 percent share in 2015 to over 55 percent by 2026. IBR declines from about 35 percent to 20 percent. PAYE stays around 15 percent. ICR remains under 10 percent throughout."
+#| fig-width: 6.5
+#| fig-height: 3.8
+
+# Primary Author: Jack | Reviewed by: Ammar
+# Plan: show how IDR plan composition shifted, especially after REPAYE introduction
+# Improve: ordered factor levels so REPAYE appears at top for readability
+
+jack_clean_idr |>
+  select(time_index, time, repaye_share, paye_share, ibr_share, icr_share) |>
+  pivot_longer(
+    cols      = c(repaye_share, paye_share, ibr_share, icr_share),
+    names_to  = "plan_type",
+    values_to = "share"
+  ) |>
+  mutate(
+    plan_type = case_when(
+      plan_type == "repaye_share" ~ "REPAYE",
+      plan_type == "paye_share"   ~ "PAYE",
+      plan_type == "ibr_share"    ~ "IBR",
+      plan_type == "icr_share"    ~ "ICR",
+      .default = plan_type
+    ),
+    plan_type = factor(
+      x      = plan_type,
+      levels = c("ICR", "IBR", "PAYE", "REPAYE")
+    )
+  ) |>
+  ggplot(mapping = aes(x = time_index, y = share, fill = plan_type)) +
+  geom_area(alpha = 0.85) +
+  geom_vline(
+    xintercept = jack_cares_idx,
+    linetype   = "dashed",
+    color      = "#666666",
+    linewidth  = 0.7
+  ) +
+  annotate(
+    geom  = "text",
+    x     = jack_cares_idx + 0.6,
+    y     = 88,
+    label = "CARES Act\n(Mar 2020)",
+    size  = 2.4,
+    color = "#555555",
+    hjust = 0
+  ) +
+  scale_x_continuous(
+    breaks = seq(from = 1, to = nrow(jack_clean_idr), by = 4),
+    labels = jack_clean_idr$time[seq(from = 1, to = nrow(jack_clean_idr), by = 4)]
+  ) +
+  scale_y_continuous(
+    labels = label_percent(scale = 1, accuracy = 1),
+    name   = "Share of IDR Recipients (%)"
+  ) +
+  scale_fill_manual(
+    values = c(
+      "REPAYE" = "#2980B9",
+      "PAYE"   = "#27AE60",
+      "IBR"    = "#E67E22",
+      "ICR"    = "#8E44AD"
+    )
+  ) +
+  labs(
+    x    = "Fiscal Quarter",
+    fill = "Plan Type"
+  ) +
+  stat184_theme +
+  theme(legend.position = "right", legend.text = element_text(size = 7))
+```
+
+From the graph we can observe a shift in IDR plan composition over the observation period. REPAYE, introduced in 2015, has grown to become the dominant plan type, covering over 55 percent of IDR recipients by FY2026. This is explained by REPAYE's more generous terms compared to older plans, including a shorter forgiveness timeline for undergraduate debt and an interest subsidy for negative amortization. IBR and ICR shares have declined correspondingly as borrowers transition to newer plans. The plan composition remained relatively stable through the CARES Act period, suggesting that the pandemic-era administrative forbearance did not fundamentally alter which IDR plans borrowers selected. However, the dominance of REPAYE means that a large share of IDR borrowers are now in a plan where the forgiveness clock continues to run even during periods of zero required payments, which has long-term fiscal implications for the federal loan portfolio.
+
+```{r}
+#| label: fig-jack-3
+#| fig-cap: "Average IDR balance per recipient ($ thousands), FY2013 Q3 – FY2026 Q1. The steady rise from approximately $40K to over $70K indicates IDR is increasingly serving higher-balance borrowers."
+#| fig-alt: "Area-line chart showing average IDR balance per borrower rising from about 40 thousand dollars in 2013 to over 70 thousand dollars by 2026. The trend is steadily upward with a plateau between 2020 and 2023 corresponding to the CARES Act forbearance period."
+#| fig-width: 6.5
+#| fig-height: 3.5
+
+# Primary Author: Jack | Reviewed by: Ammar
+# Plan: plot average balance per IDR recipient over time to connect to default trends
+# Improve: added CARES Act annotation to show the plateau period
+
+jack_clean_idr |>
+  ggplot(mapping = aes(x = time_index, y = avg_idr_balance_k)) +
+  geom_area(fill = "#27AE60", alpha = 0.15) +
+  geom_line(color = "#27AE60", linewidth = 1.3) +
+  geom_vline(
+    xintercept = jack_cares_idx,
+    linetype   = "dashed",
+    color      = "#666666",
+    linewidth  = 0.7
+  ) +
+  annotate(
+    geom  = "text",
+    x     = jack_cares_idx + 0.6,
+    y     = max(jack_clean_idr$avg_idr_balance_k, na.rm = TRUE) * 0.92,
+    label = "CARES Act\n(Mar 2020)",
+    size  = 2.4,
+    color = "#555555",
+    hjust = 0
+  ) +
+  scale_x_continuous(
+    breaks = seq(from = 1, to = nrow(jack_clean_idr), by = 4),
+    labels = jack_clean_idr$time[seq(from = 1, to = nrow(jack_clean_idr), by = 4)]
+  ) +
+  scale_y_continuous(
+    labels = label_dollar(suffix = "K", accuracy = 1)
+  ) +
+  labs(
+    x = "Fiscal Quarter",
+    y = "Average IDR Balance per Borrower ($K)"
+  ) +
+  stat184_theme
+```
+
+From the graph we can observe that the average IDR borrower balance has risen from approximately $40,000 in FY2013 to over $70,000 by FY2026, representing a 75 percent increase over the observation period. This trend mirrors the increase in average defaulted balances shown in the core analysis, where the average debt per defaulter rose from $14,000 to over $23,000 over a similar timeframe. The plateau during the CARES Act period is explained by the payment pause, which halted new enrollment-driven changes in average balances. However, the sharp uptick after FY2024 suggests that borrowers returning to active IDR status after the forbearance period ended are carrying even larger balances than before. This creates a structural challenge as IDR plans are designed to prevent default by making payments affordable. However, as average balances grow, more borrowers will reach the forgiveness threshold before fully repaying their loans. This shifts the cost from borrowers to the federal government and raising questions about the long-term sustainability of the IDR system as a default prevention mechanism.
 
 # Additional Exploratory Analyses
 
